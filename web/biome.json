@@ -1,0 +1,14 @@
+{
+  "files": {
+    "includes": ["src/**/*.ts", "src/**/*.tsx", "*.ts"]
+  },
+  "formatter": {
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 120
+  },
+  "linter": {
+    "enabled": true,
+    "rules": { "preset": "recommended" }
+  }
+}

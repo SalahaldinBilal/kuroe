@@ -1,0 +1,84 @@
+.Row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  box-sizing: border-box;
+  min-height: 60px;
+  padding: 12px 18px;
+
+  & + .Row {
+    border-top: 1px solid var(--line-soft);
+  }
+
+  .Text {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .Label {
+    color: var(--text-strong);
+    font-weight: 500;
+  }
+
+  .Description {
+    margin-top: 3px;
+    color: var(--text-muted);
+    font-size: var(--font-md);
+    line-height: 1.35;
+  }
+
+  .Control {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-shrink: 0;
+    width: 380px;
+    max-width: 60%;
+
+    > * {
+      flex: 1;
+    }
+
+    // A segmented control stretched to the row splits the width between its options.
+    > fieldset {
+      display: flex;
+
+      > * {
+        flex: 1;
+      }
+    }
+
+    > label:only-child {
+      flex: 0 0 auto;
+    }
+  }
+
+  &.Stack {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+
+    .Control {
+      width: 100%;
+      max-width: 100%;
+      justify-content: flex-start;
+    }
+  }
+
+  &.Disabled .Text {
+    opacity: 0.45;
+  }
+
+  @media (max-width: 900px) {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 14px;
+
+    .Control {
+      width: 100%;
+      max-width: 100%;
+      justify-content: flex-start;
+    }
+  }
+}

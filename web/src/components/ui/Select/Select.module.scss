@@ -1,0 +1,158 @@
+.Select {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  box-sizing: border-box;
+  height: var(--control-height);
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-md);
+  background-color: var(--surface-raised);
+  box-shadow: var(--highlight), var(--shadow-control);
+  color: var(--text-strong);
+  font-size: var(--font-md);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: var(--transition-colors);
+
+  &:hover:not(.Disabled) {
+    border-color: var(--control-border-hover);
+    background-color: var(--surface-active);
+  }
+
+  &:focus {
+    outline: none;
+  }
+
+  &:focus-visible,
+  &.Open {
+    border-color: var(--text-strong);
+    box-shadow: var(--focus-ring);
+  }
+
+  &.Small {
+    height: 26px;
+    padding: 0 6px 0 8px;
+    font-size: var(--font-sm);
+  }
+
+  &.Mono .Label {
+    font-family: var(--font-mono);
+    font-size: var(--font-sm);
+  }
+
+  &.Disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  .Label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .Placeholder {
+    flex: 1;
+    color: var(--text-faint);
+  }
+
+  .Chevron {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    color: var(--text-muted);
+    transition: transform var(--duration) var(--ease);
+  }
+
+  &.Open .Chevron {
+    transform: rotate(180deg);
+  }
+}
+
+.Menu {
+  position: fixed;
+  z-index: var(--z-menu);
+  max-height: 320px;
+  padding: 4px;
+  overflow-y: auto;
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-raised);
+  box-shadow: var(--shadow-float);
+  animation: drop-in var(--duration) var(--ease);
+
+  &.Mono .ItemLabel {
+    font-family: var(--font-mono);
+    font-size: var(--font-sm);
+  }
+
+  .Item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 10px 0 6px;
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font-size: var(--font-md);
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      background-color var(--duration-fast) var(--ease),
+      color var(--duration-fast) var(--ease);
+
+    &.Highlighted {
+      background-color: var(--ink);
+      color: var(--on-ink);
+
+      .Check,
+      .Hint {
+        color: var(--on-ink);
+        opacity: 0.8;
+      }
+    }
+
+    &.ItemDisabled {
+      color: var(--text-faint);
+      cursor: default;
+
+      .Hint {
+        color: var(--text-faint);
+      }
+    }
+  }
+
+  .Check {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    flex-shrink: 0;
+    color: var(--text-strong);
+
+    svg {
+      width: 14px;
+      height: 14px;
+    }
+  }
+
+  .ItemLabel {
+    flex: 1;
+  }
+
+  .Hint {
+    margin-left: 16px;
+    color: var(--text-faint);
+    font-size: var(--font-sm);
+  }
+}
+
+@keyframes drop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}

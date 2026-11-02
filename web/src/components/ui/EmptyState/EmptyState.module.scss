@@ -1,0 +1,62 @@
+.EmptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 44px 32px;
+  text-align: center;
+
+  &.Compact {
+    padding: 28px 16px;
+  }
+}
+
+.Icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 6px;
+  border-radius: 50%;
+  background-color: var(--surface-active);
+  color: var(--text-muted);
+
+  svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .Danger & {
+    background-color: var(--danger-soft);
+    color: var(--danger);
+  }
+
+  .Success & {
+    background-color: var(--ok-soft);
+    color: var(--ok);
+  }
+}
+
+.Title {
+  color: var(--text-strong);
+  font-size: var(--font-base);
+  font-weight: 600;
+}
+
+.Description {
+  max-width: 420px;
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+  word-break: break-word;
+}
+
+.Actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}

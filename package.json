@@ -1,0 +1,9 @@
+{
+  "name": "kuroe",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "version:bump": "node scripts/bump-version.ts"
+  }
+}

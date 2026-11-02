@@ -1,0 +1,166 @@
+.Trigger {
+  max-width: 100%;
+}
+
+.Label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.Popover {
+  position: fixed;
+  z-index: var(--z-menu);
+  display: grid;
+  grid-template-columns: 156px 1fr;
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-raised);
+  box-shadow: var(--shadow-float);
+  animation: fade var(--duration-fast) var(--ease);
+}
+
+.Presets {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  border-right: 1px solid var(--line-soft);
+}
+
+.Popover .Preset {
+  justify-content: space-between;
+}
+
+.Custom {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.MonthHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-strong);
+  font-size: var(--font-md);
+  font-weight: 500;
+}
+
+.Grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  row-gap: 2px;
+}
+
+.Weekday {
+  padding: 4px 0;
+  color: var(--text-faint);
+  font-size: var(--font-xs);
+  text-align: center;
+}
+
+.Day {
+  all: unset;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--font-sm);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: var(--transition-colors);
+
+  &:hover:not(:disabled):not(.Edge) {
+    background-color: var(--surface-hover);
+    color: var(--text-strong);
+  }
+
+  &:focus-visible {
+    box-shadow: var(--focus-ring);
+  }
+
+  &:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+}
+
+.Outside {
+  color: var(--text-faint);
+}
+
+.Today:not(.Edge) {
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.InSpan {
+  border-radius: 0;
+  background-color: var(--neutral-soft);
+  color: var(--text-strong);
+}
+
+.Edge {
+  border-radius: var(--radius-sm);
+  background-color: var(--ink);
+  color: var(--on-ink);
+}
+
+.Fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.Footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.Note {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+}
+
+.Bad {
+  color: var(--danger);
+}
+
+@media (max-width: 560px) {
+  .Popover {
+    grid-template-columns: 1fr;
+  }
+
+  .Presets {
+    flex-direction: row;
+    flex-wrap: wrap;
+    border-right: none;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .Popover .Preset {
+    flex: 0 0 auto;
+    width: auto;
+  }
+
+  .Fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}

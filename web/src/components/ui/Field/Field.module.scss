@@ -1,0 +1,36 @@
+.Field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+
+  &.Grow {
+    flex: 1;
+  }
+}
+
+.Label {
+  color: var(--text);
+  font-size: var(--font-sm);
+  font-weight: 550;
+}
+
+.Hint {
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+}
+
+.Row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+
+  > * {
+    flex: 1;
+  }
+
+  @media (max-width: 900px) {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

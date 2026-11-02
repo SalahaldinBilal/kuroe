@@ -1,0 +1,131 @@
+.Button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  gap: 6px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  height: var(--control-height);
+  padding: 0 12px;
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background-color: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--font-md);
+  font-weight: 500;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    var(--transition-colors),
+    transform var(--duration-fast) var(--ease);
+
+  svg {
+    flex-shrink: 0;
+    width: 15px;
+    height: 15px;
+  }
+
+  &:not(:disabled):active {
+    transform: translateY(0.5px);
+  }
+
+  &:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+
+  &.Small {
+    height: 26px;
+    padding: 0 9px;
+    font-size: var(--font-sm);
+    gap: 5px;
+
+    svg {
+      width: 14px;
+      height: 14px;
+    }
+  }
+
+  &.Icon {
+    width: var(--control-height);
+    padding: 0;
+
+    &.Small {
+      width: 26px;
+    }
+  }
+
+  &.Block {
+    width: 100%;
+    height: 36px;
+  }
+}
+
+.ghost {
+  color: var(--text-muted);
+
+  &:not(:disabled):hover {
+    background-color: var(--surface-hover);
+    color: var(--text-strong);
+  }
+
+  &.Active {
+    background-color: var(--surface-active);
+    color: var(--text-strong);
+  }
+}
+
+.subtle {
+  border-color: var(--control-border);
+  background-color: var(--surface-raised);
+  box-shadow: var(--highlight), var(--shadow-control);
+  color: var(--text-strong);
+
+  &:not(:disabled):hover {
+    border-color: var(--control-border-hover);
+    background-color: var(--surface-active);
+  }
+
+  &.Active {
+    border-color: var(--text-strong);
+  }
+}
+
+.primary {
+  background-color: var(--ink);
+  box-shadow: var(--shadow-control);
+  color: var(--on-ink);
+
+  &:not(:disabled):hover {
+    opacity: 0.88;
+  }
+}
+
+.danger {
+  color: var(--danger);
+
+  &:not(:disabled):hover {
+    background-color: var(--danger-soft);
+  }
+}
+
+.dangerSolid {
+  background-color: var(--accent);
+  box-shadow: var(--shadow-control);
+  color: #fff;
+
+  &:not(:disabled):hover {
+    opacity: 0.9;
+  }
+}

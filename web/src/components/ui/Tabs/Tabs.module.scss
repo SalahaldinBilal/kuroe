@@ -1,0 +1,65 @@
+.Container {
+  display: flex;
+  align-items: stretch;
+  height: 40px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 18px 0 20px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.Tab {
+  all: unset;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  color: var(--text-muted);
+  font-size: var(--font-md);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: var(--transition-colors);
+
+  &:hover:not(.Active):not(:disabled) {
+    color: var(--text-strong);
+    background-color: var(--surface-hover);
+  }
+
+  &:focus-visible {
+    background-color: var(--surface-hover);
+  }
+
+  &.Active {
+    color: var(--text-strong);
+    box-shadow: inset 0 -2px 0 var(--accent);
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.4;
+  }
+}
+
+.Count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 17px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background-color: var(--neutral-soft);
+  color: var(--text-muted);
+  font-size: var(--font-xs);
+  font-weight: 600;
+}
