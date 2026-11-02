@@ -3,6 +3,8 @@
   align-items: center;
   gap: 2px;
   box-sizing: border-box;
+  width: fit-content;
+  max-width: 100%;
   min-width: 0;
   height: var(--control-height);
   margin: 0;
@@ -13,6 +15,7 @@
 
   &.Fill {
     display: flex;
+    width: 100%;
 
     .Option {
       flex: 1;

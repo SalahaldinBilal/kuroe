@@ -72,18 +72,40 @@ export function SecretField(props: { label: string; value: string; hint?: string
   );
 }
 
+/** The clipboard API only exists on HTTPS and localhost, and kuroe is often opened over plain HTTP. */
+export async function copyText(text: string): Promise<boolean> {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      return copyWithSelection(text);
+    }
+  }
+  return copyWithSelection(text);
+}
+
+function copyWithSelection(text: string): boolean {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  const copied = document.execCommand("copy");
+  area.remove();
+  return copied;
+}
+
 export function CopyButton(props: { text: string; size?: "sm" | "md"; label?: string }) {
   const { pushToast } = useToastState;
+  async function copy() {
+    if (await copyText(props.text)) pushToast("Copied");
+    else pushToast("Couldn't copy, select the text instead", "error");
+  }
   return (
-    <Button
-      size={props.size ?? "sm"}
-      onClick={() =>
-        navigator.clipboard.writeText(props.text).then(
-          () => pushToast("Copied"),
-          () => pushToast("Couldn't copy, select the text instead", "error"),
-        )
-      }
-    >
+    <Button size={props.size ?? "sm"} onClick={copy}>
       <Icon name="copy" />
       {props.label ?? "Copy"}
     </Button>

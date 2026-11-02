@@ -820,6 +820,10 @@ button.list-i {
   color: var(--text);
   font: 12.5px/1.65 var(--font-mono);
   white-space: pre;
+
+  &.full {
+    max-height: none;
+  }
 }
 
 .code-wrap {

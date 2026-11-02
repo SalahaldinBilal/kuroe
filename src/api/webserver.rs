@@ -113,7 +113,17 @@ pub(super) async fn write_config(state: &AppState) -> ApiResult<Option<String>> 
     let Some(ws) = s.web_server.clone().filter(|_| in_front(&s)) else { return Ok(None) };
     let (list, _) = entries(state, &s).await?;
     let files = render(&s, &ws, &list)?;
-    let result = webserver::install::install(&state.docker, &files, &ws.reloader()).await;
+    let reloader = ws.reloader();
+    let host_from_container = matches!(reloader, webserver::install::Reloader::Command(_))
+        && matches!(crate::update::detect(&state.docker).await, crate::update::InstallMode::Container { .. });
+    let result = if host_from_container {
+        Err(anyhow::anyhow!(
+            "kuroe runs in a container, so it can't write the config on the server or reload the web server there. \
+             Copy the config from Show config and install it yourself, or run the web server in a container"
+        ))
+    } else {
+        webserver::install::install(&state.docker, &files, &reloader).await
+    };
     let error = result.as_ref().err().map(|e| format!("{e:#}"));
     sqlx::query("INSERT INTO settings (key, value) VALUES ('web_server_error', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
         .bind(error.clone().unwrap_or_default())

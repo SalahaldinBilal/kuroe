@@ -1,22 +1,22 @@
-import { createSignal, For, Show } from "solid-js";
+import { createResource, createSignal, For, Show } from "solid-js";
 import { api, type ConfigFile, type ProxySettings, type WebServerKind, type WebServerPreview } from "../api";
 import useToastState from "../states/toastState";
 import { extraFile, KINDS, serverDefaults, switchKind, WEB_SERVERS, type WebServerDraft } from "../webserver";
 import { Card, Note } from "./ui/Blocks";
 import Button from "./ui/Button/Button";
 import Field, { FieldRow } from "./ui/Field/Field";
-import { Tiles } from "./ui/Form";
 import { Icon } from "./ui/Icon";
 import Input from "./ui/Input/Input";
-import { CopyButton } from "./ui/Overlay";
+import { CopyButton, ready } from "./ui/Overlay";
 import SegmentedControl from "./ui/SegmentedControl/SegmentedControl";
 import Select from "./ui/Select/Select";
+import SettingRow from "./ui/SettingRow/SettingRow";
 import Switch from "./ui/Switch/Switch";
 
 /** Config files with their path and a copy button, plus the lines the user adds to their own config once. */
 export function ConfigFiles(props: { files: ConfigFile[]; steps: string[] }) {
   return (
-    <div class="stack" style={{ gap: "10px" }}>
+    <div class="stack" style={{ gap: "12px" }}>
       <Show when={props.steps.length > 0}>
         <Note>
           <div class="stack" style={{ gap: "4px" }}>
@@ -27,11 +27,11 @@ export function ConfigFiles(props: { files: ConfigFile[]; steps: string[] }) {
       <For each={props.files}>
         {(file) => (
           <div class="stack" style={{ gap: "6px" }}>
-            <span class="mono muted">{file.path}</span>
-            <div class="code-wrap">
-              <pre class="code">{file.body || "(empty)"}</pre>
+            <div class="hrow" style={{ "justify-content": "space-between", gap: "8px" }}>
+              <span class="mono muted">{file.path}</span>
               <CopyButton text={file.body} />
             </div>
+            <pre class="code full">{file.body || "(empty)"}</pre>
           </div>
         )}
       </For>
@@ -55,11 +55,19 @@ interface Props {
 
 const OTHER = "other";
 
+const EXTRA_DEFAULT: Partial<Record<WebServerKind, string>> = {
+  nginx: "/etc/nginx/kuroe-stream.conf",
+  haproxy: "/etc/haproxy/kuroe.map",
+};
+
 export function WebServerCard(props: Props) {
   const { pushToast, pushError } = useToastState;
+  const [version] = createResource(api.version);
   const [preview, setPreview] = createSignal<WebServerPreview | null>(null);
   const [output, setOutput] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
+
+  const kuroeInContainer = () => ready(version)?.install.mode === "container";
 
   function patch(p: Partial<WebServerDraft>) {
     const s = props.server;
@@ -126,195 +134,250 @@ export function WebServerCard(props: Props) {
       }
     >
       <Show when={props.behind || props.server}>
-        <div class="card-b stack" style={{ gap: "14px" }}>
-          <Field label="Web server">
-            <Select
-              label="Web server"
-              disabled={props.disabled}
-              items={kindItems()}
-              value={props.server?.kind ?? OTHER}
-              onChange={pick}
-            />
-          </Field>
-          <Show
-            when={props.server}
-            fallback={
+        <SettingRow label="Web server">
+          <Select
+            label="Web server"
+            disabled={props.disabled}
+            items={kindItems()}
+            value={props.server?.kind ?? OTHER}
+            onChange={pick}
+          />
+        </SettingRow>
+        <Show
+          when={props.server}
+          fallback={
+            <div class="card-b">
               <Note>
                 Send kuroe's hostnames to <span class="mono">http://{props.behindHttp}</span>. Keep the Host header and
                 set X-Forwarded-Proto. Your server handles HTTPS.
               </Note>
-            }
-          >
-            {(s) => {
-              const info = () => WEB_SERVERS[s().kind];
-              const extra = () => extraFile(s().kind, props.behind ? s().mode : "front");
-              const front = () => !props.behind || s().mode === "front";
-              return (
-                <>
-                  <Show when={props.behind}>
-                    <Field label="Who handles HTTPS">
-                      <Show
-                        when={info().passthrough}
-                        fallback={
-                          <span class="hint">
-                            {info().label} can't pass HTTPS through untouched, so it handles HTTPS itself.
-                          </span>
-                        }
-                      >
-                        <Tiles
-                          label="Who handles HTTPS"
-                          columns={2}
-                          value={s().mode}
-                          disabled={props.disabled}
-                          onChange={(mode) => patch({ mode })}
-                          options={[
-                            {
-                              value: "front",
-                              label: info().label,
-                              icon: "server",
-                              description: "It keeps its own certificates and forwards plain HTTP to Traefik.",
-                            },
-                            {
-                              value: "passthrough",
-                              label: "Traefik",
-                              icon: "shield",
-                              description: "It passes HTTPS through by hostname. Traefik gets the certificates.",
-                            },
-                          ]}
-                        />
-                      </Show>
-                    </Field>
-                  </Show>
-                  <FieldRow>
-                    <Field label="Config file" grow>
-                      <Input
-                        mono
-                        label="Config file"
-                        disabled={props.disabled}
-                        value={s().path}
-                        onValue={(path) => patch({ path })}
-                      />
-                    </Field>
-                    <Show when={extra()}>
-                      {(label) => (
-                        <Field label={label()} grow>
-                          <Input
-                            mono
-                            label={label()}
-                            disabled={props.disabled}
-                            value={s().extra_path}
-                            onValue={(extra_path) => patch({ extra_path })}
-                          />
-                        </Field>
-                      )}
-                    </Show>
-                  </FieldRow>
-                  <Field label="Runs on">
-                    <SegmentedControl
-                      label="Runs on"
-                      value={s().where}
-                      onChange={(where) => patch({ where })}
-                      options={
-                        [
-                          { value: "host", label: "This machine" },
-                          { value: "container", label: "A container" },
-                        ] as const
-                      }
-                    />
-                  </Field>
-                  <Show
-                    when={s().where === "container"}
-                    fallback={
-                      <Field
-                        label="Test and reload"
-                        hint={
-                          s().kind === "traefik"
-                            ? "Traefik watches its folder, so nothing needs to run."
-                            : "Runs after writing. When it fails, the old files are put back."
-                        }
-                      >
-                        <Input
-                          mono
-                          label="Test and reload"
-                          disabled={props.disabled}
-                          value={s().command}
-                          onValue={(command) => patch({ command })}
-                        />
-                      </Field>
+            </div>
+          }
+        >
+          {(s) => {
+            const info = () => WEB_SERVERS[s().kind];
+            const extra = () => extraFile(s().kind, props.behind ? s().mode : "front");
+            const front = () => !props.behind || s().mode === "front";
+            const manual = () => kuroeInContainer() && s().where === "host";
+            return (
+              <>
+                <Show when={props.behind}>
+                  <SettingRow
+                    label="HTTPS certificates"
+                    description={
+                      !info().passthrough
+                        ? `${info().label} can't pass HTTPS through untouched, so it keeps its own certificates.`
+                        : s().mode === "front"
+                          ? `${info().label} keeps its own certificates, for example from certbot, and sends plain HTTP to Traefik.`
+                          : `${info().label} passes HTTPS through by hostname. kuroe's Traefik gets the certificates.`
                     }
                   >
-                    <Field
-                      label="Container"
-                      hint="kuroe runs the config test in it, then sends the reload signal. Mount its config folder into kuroe at the same path."
+                    <Show when={info().passthrough}>
+                      <SegmentedControl
+                        label="HTTPS certificates"
+                        value={s().mode}
+                        onChange={(mode) => patch({ mode })}
+                        options={[
+                          { value: "front" as const, label: `${info().label} has them` },
+                          { value: "passthrough" as const, label: "kuroe gets them" },
+                        ]}
+                      />
+                    </Show>
+                  </SettingRow>
+                </Show>
+                <SettingRow
+                  label={`${info().label} runs`}
+                  description={
+                    s().where === "host"
+                      ? "Installed on the server itself."
+                      : "In its own Docker container on this server."
+                  }
+                >
+                  <SegmentedControl
+                    label={`${info().label} runs`}
+                    value={s().where}
+                    onChange={(where) => patch({ where })}
+                    options={
+                      [
+                        { value: "host", label: "On the server" },
+                        { value: "container", label: "In a container" },
+                      ] as const
+                    }
+                  />
+                </SettingRow>
+                <Show when={manual()}>
+                  <div class="card-b">
+                    <Note tone="warn">
+                      kuroe runs in a container, so it can't write {info().label}'s config on the server or reload it.
+                      Use Show config below, copy the file to <span class="mono">{s().path}</span>
+                      <Show when={s().command}>
+                        {" "}
+                        and run <span class="mono">{s().command}</span>
+                      </Show>
+                      . Do it again when domains change. If {info().label} runs in a container instead, pick that above.
+                    </Note>
+                  </div>
+                </Show>
+                <SettingRow
+                  type="stack"
+                  label="Config file"
+                  description={
+                    manual()
+                      ? "Where the file goes on the server."
+                      : s().where === "container"
+                        ? `kuroe writes it here. Mount ${info().label}'s config folder into kuroe at the same path.`
+                        : "kuroe writes it here and replaces it on every install."
+                  }
+                >
+                  <Input
+                    mono
+                    label="Config file"
+                    disabled={props.disabled}
+                    value={s().path}
+                    onValue={(path) => patch({ path })}
+                  />
+                </SettingRow>
+                <Show when={extra()}>
+                  {(label) => (
+                    <SettingRow
+                      type="stack"
+                      label={label()}
+                      description={
+                        s().kind === "nginx"
+                          ? "The passthrough part of the config. nginx.conf has to include it at the top level, outside the http block."
+                          : "Which hostname goes to which backend. kuroe writes it next to the config file."
+                      }
                     >
                       <Input
                         mono
-                        label="Container"
-                        placeholder="nginx"
+                        label={label()}
+                        placeholder={EXTRA_DEFAULT[s().kind] ?? ""}
                         disabled={props.disabled}
-                        value={s().container}
-                        onValue={(container) => patch({ container })}
+                        value={s().extra_path}
+                        onValue={(extra_path) => patch({ extra_path })}
                       />
-                    </Field>
-                  </Show>
-                  <Show when={front() && !info().ownCertificates}>
+                    </SettingRow>
+                  )}
+                </Show>
+                <Show
+                  when={s().where === "container"}
+                  fallback={
+                    <SettingRow
+                      type="stack"
+                      label="Test and reload"
+                      description={
+                        s().kind === "traefik"
+                          ? "Traefik watches its folder, so nothing needs to run."
+                          : manual()
+                            ? "The command to run on the server after copying the file."
+                            : "kuroe runs it after writing. When it fails, the old file is put back."
+                      }
+                    >
+                      <Input
+                        mono
+                        label="Test and reload"
+                        disabled={props.disabled}
+                        value={s().command}
+                        onValue={(command) => patch({ command })}
+                      />
+                    </SettingRow>
+                  }
+                >
+                  <SettingRow
+                    type="stack"
+                    label="Container"
+                    description={`kuroe runs ${info().label}'s config test in it, then sends the reload signal.`}
+                  >
+                    <Input
+                      mono
+                      label="Container"
+                      placeholder="nginx"
+                      disabled={props.disabled}
+                      value={s().container}
+                      onValue={(container) => patch({ container })}
+                    />
+                  </SettingRow>
+                </Show>
+                <Show when={front() && !info().ownCertificates}>
+                  <SettingRow
+                    type="stack"
+                    label="Certificate and key"
+                    description={
+                      <>
+                        Where {info().label} finds each site's certificate. kuroe doesn't create these files. The
+                        defaults are where certbot puts them. <span class="mono">{"{host}"}</span> becomes each
+                        hostname.
+                      </>
+                    }
+                  >
                     <FieldRow>
-                      <Field label="Certificate file" grow hint="{host} is replaced by each hostname.">
+                      <Field label="Certificate" grow>
                         <Input
                           mono
-                          label="Certificate file"
+                          label="Certificate"
                           disabled={props.disabled}
                           value={s().cert}
                           onValue={(cert) => patch({ cert })}
                         />
                       </Field>
-                      <Field label="Key file" grow>
+                      <Field label="Key" grow>
                         <Input
                           mono
-                          label="Key file"
+                          label="Key"
                           disabled={props.disabled}
                           value={s().key}
                           onValue={(key) => patch({ key })}
                         />
                       </Field>
                     </FieldRow>
-                  </Show>
-                  <Show when={!front()}>
-                    <Field
+                  </SettingRow>
+                </Show>
+                <Show when={!front()}>
+                  <SettingRow
+                    type="stack"
+                    label="Your own HTTPS sites"
+                    description="Port 443 now goes through the hostname check first. Your server's own HTTPS sites move to this address."
+                  >
+                    <Input
+                      mono
                       label="Your own HTTPS sites"
-                      hint="Port 443 now goes through the hostname check first. Your server's own HTTPS sites move to this address."
-                    >
-                      <Input
-                        mono
-                        label="Your own HTTPS sites"
-                        disabled={props.disabled}
-                        value={s().rest_tls}
-                        onValue={(rest_tls) => patch({ rest_tls })}
-                      />
-                    </Field>
+                      disabled={props.disabled}
+                      value={s().rest_tls}
+                      onValue={(rest_tls) => patch({ rest_tls })}
+                    />
+                  </SettingRow>
+                </Show>
+                <Show when={!manual()}>
+                  <SettingRow label="Keep it in sync" description="Rewrite the config and reload when domains change.">
+                    <Switch checked={s().auto} disabled={props.disabled} onChange={(auto) => patch({ auto })} />
+                  </SettingRow>
+                </Show>
+                <div class="card-b stack" style={{ gap: "12px" }}>
+                  <Show when={props.error && props.saved && !manual()}>
+                    <Note tone="bad">Last install failed: {props.error}</Note>
                   </Show>
-                  <Switch
-                    label="Rewrite and reload when domains change"
-                    checked={s().auto}
-                    disabled={props.disabled}
-                    onChange={(auto) => patch({ auto })}
-                  />
-                  <Show when={props.error}>{(error) => <Note tone="bad">Last install failed: {error()}</Note>}</Show>
                   <Show when={output()}>{(text) => <pre class="code">{text()}</pre>}</Show>
                   <div class="hrow wrap" style={{ gap: "8px" }}>
-                    <Button size="sm" disabled={busy()} onClick={showPreview}>
-                      <Icon name="code" />
-                      Preview
-                    </Button>
                     <Button
                       size="sm"
-                      variant="primary"
-                      disabled={busy() || props.disabled || !props.saved}
-                      tooltip={props.saved ? undefined : "Save the settings first"}
-                      onClick={install}
+                      variant={manual() ? "primary" : undefined}
+                      disabled={busy()}
+                      onClick={showPreview}
                     >
-                      Install into {info().label}
+                      <Icon name="code" />
+                      Show config
                     </Button>
+                    <Show when={!manual()}>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        disabled={busy() || props.disabled || !props.saved}
+                        tooltip={props.saved ? undefined : "Save the settings first"}
+                        onClick={install}
+                      >
+                        Install into {info().label}
+                      </Button>
+                    </Show>
                   </div>
                   <Show when={preview()}>
                     {(p) => (
@@ -328,11 +391,11 @@ export function WebServerCard(props: Props) {
                       </>
                     )}
                   </Show>
-                </>
-              );
-            }}
-          </Show>
-        </div>
+                </div>
+              </>
+            );
+          }}
+        </Show>
       </Show>
     </Card>
   );
