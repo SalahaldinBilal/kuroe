@@ -15,7 +15,7 @@ import { ready } from "../components/ui/Overlay";
 import SegmentedControl from "../components/ui/SegmentedControl/SegmentedControl";
 import Select from "../components/ui/Select/Select";
 import Switch from "../components/ui/Switch/Switch";
-import { clonesGit, KIND_LABEL, pullsImages } from "../identities";
+import { clonesGit, KIND_LABEL, listsRepos, pullsImages } from "../identities";
 import {
   type EnvRow,
   emptyEnv,
@@ -34,6 +34,8 @@ const NAME_PATTERN = "[a-z0-9][a-z0-9\\-]{0,39}";
 const IMAGE_SITE_FOLDER = "/usr/share/nginx/html";
 
 type SiteFrom = "git" | "image" | "upload";
+
+const OTHER_REPO = "\u0000other";
 
 function LoginsHint() {
   return (
@@ -56,8 +58,10 @@ export function NewDeployment() {
   const [logins] = createResource(() => canUseLogins() || null, api.identities);
   const [access, setAccess] = createSignal("public");
   const [registryLogin, setRegistryLogin] = createSignal("");
-  const appLogin = () => (ready(logins) ?? []).find((i) => i.id === access() && i.kind === "github_app");
-  const [repos] = createResource(() => appLogin()?.id, api.identityRepos);
+  const repoLogin = () => (ready(logins) ?? []).find((i) => i.id === access() && listsRepos(i.kind));
+  const [repos] = createResource(() => repoLogin()?.id, api.identityRepos);
+  const [typeUrl, setTypeUrl] = createSignal(false);
+  const picking = () => !!repoLogin() && !typeUrl();
   const gitLogins = () => (ready(logins) ?? []).filter((i) => clonesGit(i.kind));
   const imageLogins = () => (ready(logins) ?? []).filter((i) => pullsImages(i.kind));
   const accessItems = () => [
@@ -270,13 +274,30 @@ export function NewDeployment() {
       <>
         <Show when={canUseLogins()}>
           <Field label="Access" hint={<LoginsHint />}>
-            <Select label="Access" items={accessItems()} value={access()} onChange={setAccess} />
+            <Select
+              label="Access"
+              items={accessItems()}
+              value={access()}
+              onChange={(next) => {
+                setAccess(next);
+                setTypeUrl(false);
+              }}
+            />
           </Field>
         </Show>
         <Show
-          when={appLogin()}
+          when={picking()}
           fallback={
-            <Field label="Repository URL">
+            <Field
+              label="Repository URL"
+              hint={
+                repoLogin() ? (
+                  <button type="button" class="link" onClick={() => setTypeUrl(false)}>
+                    Pick from the list instead
+                  </button>
+                ) : undefined
+              }
+            >
               <Input
                 mono
                 required
@@ -293,16 +314,31 @@ export function NewDeployment() {
             hint={
               repos.error
                 ? errorMessage(repos.error)
-                : "Repositories the GitHub App can read. Pushes deploy through the app."
+                : repoLogin()?.kind === "github_app"
+                  ? "Repositories the GitHub App can read. Pushes deploy through the app."
+                  : "Repositories this login can read. Type to filter."
             }
           >
             <Select
               mono
+              searchable
               label="Repository"
               placeholder={repos.loading ? "Loading repositories" : "Pick a repository"}
-              items={(ready(repos) ?? []).map((r) => ({ value: r.clone_url, label: r.full_name }))}
+              items={[
+                ...(ready(repos) ?? []).map((r) => ({
+                  value: r.clone_url,
+                  label: r.full_name,
+                  hint: r.private ? "private" : undefined,
+                })),
+                { value: OTHER_REPO, label: "Another repository, type its URL" },
+              ]}
               value={git().url}
-              onChange={setGitField("url")}
+              onChange={(url) => {
+                if (url === OTHER_REPO) {
+                  setGitField("url")("");
+                  setTypeUrl(true);
+                } else setGitField("url")(url);
+              }}
             />
           </Field>
         </Show>

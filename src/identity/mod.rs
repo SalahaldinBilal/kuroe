@@ -1,6 +1,7 @@
 pub mod cloudflare;
 pub mod github;
 pub mod registry;
+pub mod repos;
 
 use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};

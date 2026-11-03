@@ -22,6 +22,8 @@ export type SelectProps<T> = {
   label?: string;
   style?: JSX.CSSProperties;
   class?: string;
+  /** Typing while the menu is open filters it, for long lists. */
+  searchable?: boolean;
 };
 
 const MENU_MARGIN = 4;
@@ -35,7 +37,16 @@ function Select<T>(props: SelectProps<T>) {
   const [open, setOpen] = createSignal(false);
   const [highlight, setHighlight] = createSignal(0);
   const [menuStyle, setMenuStyle] = createSignal<JSX.CSSProperties>({});
+  const [query, setQuery] = createSignal("");
   const selected = createMemo(() => props.items.find((item) => item.value === props.value));
+  const shown = createMemo(() => {
+    const needle = query().trim().toLowerCase();
+    if (!needle) return props.items;
+    return props.items.filter(
+      (item) => item.label.toLowerCase().includes(needle) || String(item.value).toLowerCase().includes(needle),
+    );
+  });
+  const searchRow = () => (props.searchable ? 1 : 0);
 
   let control!: HTMLDivElement;
   let menu: HTMLDivElement | undefined;
@@ -56,9 +67,16 @@ function Select<T>(props: SelectProps<T>) {
         : { top: `${rect.bottom + MENU_MARGIN}px` }),
     });
     followHighlight = true;
+    setQuery("");
     const current = props.items.findIndex((item) => item.value === props.value && !item.disabled);
     setHighlight(current >= 0 ? current : nextEnabled(-1, 1));
     setOpen(true);
+  }
+
+  function filter(next: string) {
+    setQuery(next);
+    followHighlight = true;
+    setHighlight(nextEnabled(-1, 1));
   }
 
   function choose(item: SelectItem<T>) {
@@ -69,8 +87,9 @@ function Select<T>(props: SelectProps<T>) {
 
   // The nearest enabled item from `start` in `step` direction, or `start` when there is none.
   function nextEnabled(start: number, step: number): number {
-    for (let index = start + step; index >= 0 && index < props.items.length; index += step) {
-      if (!props.items[index].disabled) return index;
+    const list = shown();
+    for (let index = start + step; index >= 0 && index < list.length; index += step) {
+      if (!list[index].disabled) return index;
     }
     return start;
   }
@@ -97,7 +116,7 @@ function Select<T>(props: SelectProps<T>) {
     if (!open() || !menu || !followHighlight) return;
 
     followHighlight = false;
-    const item = menu.children[index] as HTMLElement | undefined;
+    const item = menu.children[index + searchRow()] as HTMLElement | undefined;
     if (!item) return;
 
     if (item.offsetTop < menu.scrollTop) {
@@ -116,6 +135,15 @@ function Select<T>(props: SelectProps<T>) {
       return;
     }
 
+    if (props.searchable && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      const typing = event.key.length === 1 && !(event.key === " " && query() === "");
+      if (typing || (event.key === "Backspace" && query())) {
+        event.preventDefault();
+        filter(typing ? query() + event.key : query().slice(0, -1));
+        return;
+      }
+    }
+
     switch (event.key) {
       case "ArrowDown":
         event.preventDefault();
@@ -130,7 +158,7 @@ function Select<T>(props: SelectProps<T>) {
       case "Enter":
       case " ": {
         event.preventDefault();
-        const item = props.items[highlight()];
+        const item = shown()[highlight()];
         if (item) choose(item);
         return;
       }
@@ -187,7 +215,16 @@ function Select<T>(props: SelectProps<T>) {
             style={menuStyle()}
             onMouseDown={(event) => event.preventDefault()}
           >
-            <For each={props.items}>
+            <Show when={props.searchable}>
+              <div class={styles.Search} classList={{ [styles.Typed]: query() !== "" }}>
+                <Icon name="search" />
+                <span>{query() || "Type to filter"}</span>
+              </div>
+            </Show>
+            <Show when={shown().length === 0}>
+              <div class={`${styles.Item} ${styles.ItemDisabled}`}>No matches</div>
+            </Show>
+            <For each={shown()}>
               {(item, index) => (
                 <div
                   role="option"

@@ -143,6 +143,31 @@
     flex: 1;
   }
 
+  .Search {
+    position: sticky;
+    top: -4px;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    margin: -4px -4px 4px;
+    padding: 0 10px;
+    border-bottom: 1px solid var(--line-soft);
+    background-color: var(--surface-raised);
+    color: var(--text-faint);
+    font-size: var(--font-sm);
+
+    svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    &.Typed {
+      color: var(--text-strong);
+    }
+  }
+
   .Hint {
     margin-left: 16px;
     color: var(--text-faint);

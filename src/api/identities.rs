@@ -405,13 +405,15 @@ pub async fn test(State(state): State<AppState>, current: CurrentUser, Path(id):
     Ok(Json(json!({ "message": checked.message, "expires_at": checked.expires_at })))
 }
 
-pub async fn repos(State(state): State<AppState>, current: CurrentUser, Path(id): Path<String>) -> ApiResult<Json<Vec<github::Repo>>> {
+pub async fn repos(State(state): State<AppState>, current: CurrentUser, Path(id): Path<String>) -> ApiResult<Json<Vec<identity::repos::Repo>>> {
     require_use(&current)?;
     let existing = found(&state, &id).await?;
-    if existing.kind != Kind::GithubApp {
-        return Err(ApiError::bad_request("only a GitHub App can list its repositories"));
+    if !identity::repos::lists(existing.kind) {
+        return Err(ApiError::bad_request(format!("{} can't list repositories, type the URL instead", existing.name)));
     }
-    Ok(Json(github::repositories(&state.http, &existing).await.map_err(bad_gateway)?))
+    let repos = identity::repos::list(&state.http, &existing).await.map_err(bad_gateway)?;
+    identity::touch(&state.db, &id).await?;
+    Ok(Json(repos))
 }
 
 async fn public_url(state: &AppState) -> ApiResult<String> {

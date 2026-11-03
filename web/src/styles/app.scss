@@ -95,6 +95,14 @@ textarea {
   cursor: pointer;
   transition: color var(--t-fast) var(--ease);
 
+  &:is(button) {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+  }
+
   &:hover {
     color: var(--ink);
   }

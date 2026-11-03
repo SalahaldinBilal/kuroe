@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { Identity } from "./api";
-import { expiryWarning, groupOf, pullsImages, scopeLine } from "./identities";
+import { expiryWarning, groupOf, listsRepos, pullsImages, scopeLine } from "./identities";
+
+describe("listsRepos", () => {
+  it("is every Git login with an API, not plain Git", () => {
+    const kinds: Identity["kind"][] = ["github_app", "github_token", "gitlab", "gitea"];
+    expect(kinds.every(listsRepos)).toBe(true);
+    expect(listsRepos("git")).toBe(false);
+    expect(listsRepos("registry")).toBe(false);
+  });
+});
 
 const DAY = 86400;
 

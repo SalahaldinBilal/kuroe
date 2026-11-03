@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::Identity;
+use super::repos::{Repo, parse_github};
 
 const API: &str = "https://api.github.com";
 
@@ -41,7 +42,7 @@ pub fn app_jwt(app_id: u64, pem: &str, now: i64) -> anyhow::Result<String> {
     Ok(format!("{message}.{}", URL_SAFE_NO_PAD.encode(signature)))
 }
 
-fn request(http: &reqwest::Client, method: reqwest::Method, path: &str, bearer: &str) -> reqwest::RequestBuilder {
+pub fn request(http: &reqwest::Client, method: reqwest::Method, path: &str, bearer: &str) -> reqwest::RequestBuilder {
     http.request(method, format!("{API}{path}"))
         .bearer_auth(bearer)
         .header("accept", "application/vnd.github+json")
@@ -81,14 +82,6 @@ pub async fn installation_token_for(http: &reqwest::Client, identity: &Identity)
     Ok((token, body["expires_at"].as_str().map(str::to_owned)))
 }
 
-#[derive(Debug, Serialize, PartialEq)]
-pub struct Repo {
-    pub full_name: String,
-    pub clone_url: String,
-    pub default_branch: String,
-    pub private: bool,
-}
-
 pub async fn repositories(http: &reqwest::Client, identity: &Identity) -> anyhow::Result<Vec<Repo>> {
     let (token, _) = installation_token_for(http, identity).await?;
     let mut repos = Vec::new();
@@ -96,14 +89,8 @@ pub async fn repositories(http: &reqwest::Client, identity: &Identity) -> anyhow
         let path = format!("/installation/repositories?per_page=100&page={page}");
         let body = json_ok(request(http, reqwest::Method::GET, &path, &token).send().await?, "the repository list").await?;
         let list = body["repositories"].as_array().cloned().unwrap_or_default();
-        let done = list.len() < 100;
-        repos.extend(list.into_iter().map(|r| Repo {
-            full_name: r["full_name"].as_str().unwrap_or_default().to_owned(),
-            clone_url: r["clone_url"].as_str().unwrap_or_default().to_owned(),
-            default_branch: r["default_branch"].as_str().unwrap_or("main").to_owned(),
-            private: r["private"].as_bool().unwrap_or(false),
-        }));
-        if done {
+        repos.extend(parse_github(&list));
+        if list.len() < 100 {
             break;
         }
     }

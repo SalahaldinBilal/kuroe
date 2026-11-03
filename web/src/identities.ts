@@ -50,6 +50,7 @@ export function groupOf(kind: IdentityKind): Group {
 
 export const clonesGit = (kind: IdentityKind) => groupOf(kind) === "git";
 export const pullsImages = (kind: IdentityKind) => kind === "registry" || kind === "github_token" || kind === "gitlab";
+export const listsRepos = (kind: IdentityKind) => clonesGit(kind) && kind !== "git";
 
 const DAY = 24 * 60 * 60;
 

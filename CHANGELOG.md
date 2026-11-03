@@ -13,6 +13,7 @@
 - Ctrl+C (Cmd+C on a Mac) copies the selected text in live logs and shells. Ctrl+Shift+C copies too. In a shell, Ctrl+C with nothing selected still stops the running command.
 - Charts scale to their data instead of a far-off limit, and leave little empty space above the highest value. Memory and traffic charts step in powers of two, so a 512 MiB limit lands on a gridline. A limit far above the data is named next to the title. A container without a memory limit no longer shows the host's memory as its limit.
 - A deployment's metrics can show each container as its own line, and the Metrics page shows every deployment you can see side by side. The seven busiest get their own line and the rest are added up as "other".
+- New deployment lists the repositories a saved GitHub token, GitLab token or Gitea/Forgejo token can read, as it already did for a GitHub App. Type to filter the list, or pick "Another repository" to type a URL.
 
 ## [0.1.1] - 2026-11-02
 
