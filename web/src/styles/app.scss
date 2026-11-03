@@ -19,7 +19,11 @@ body {
 }
 
 ::selection {
-  background: var(--accent-soft);
+  background: var(--selection);
+}
+
+.term ::selection {
+  background: var(--term-selection);
 }
 
 h1,

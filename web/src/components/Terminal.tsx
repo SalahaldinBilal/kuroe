@@ -30,7 +30,8 @@ export function Terminal(props: Props) {
         background: token("--term-bg"),
         foreground: token("--term-text"),
         cursor: token("--term-text"),
-        selectionBackground: "#3a3c40",
+        selectionBackground: token("--term-selection"),
+        selectionInactiveBackground: token("--term-selection"),
       },
     });
     const fit = new FitAddon();
