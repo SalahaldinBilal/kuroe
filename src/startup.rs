@@ -26,6 +26,10 @@ pub async fn boot(data_dir: &Path, listen: SocketAddr, secure_cookies: bool, no_
             tracing::info!("applied {applied} database migrations");
         }
     }
+    let interrupted = crate::deploy::history::fail_interrupted(&pool).await.context("closing deploys cut off by the last stop")?;
+    if interrupted > 0 {
+        tracing::warn!("marked deploys failed that were still running when kuroe stopped: {interrupted}");
+    }
     if !auth::has_users(&pool).await? {
         let code = setup_code::get_or_create(data_dir).context("creating the setup code")?;
         tracing::warn!("kuroe is not set up yet. Setup code: {code} (also in {})", setup_code::path(data_dir).display());

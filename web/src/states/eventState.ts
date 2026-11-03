@@ -1,9 +1,10 @@
 import { createSignal, onCleanup } from "solid-js";
-import { socketUrl } from "../api";
+import { type DeployStepName, socketUrl } from "../api";
 
 export type LiveEvent =
   | { kind: "deployment.status"; id: string; status: string; revision: number }
   | { kind: "deployment.changed"; id: string }
+  | { kind: "deploy.step"; id: string; step: DeployStepName; detail: string | null }
   | { kind: "container.state"; deployment: string; container: string; state: string }
   | { kind: "proxy.traefik"; running: boolean }
   | { kind: "runner.instance"; pool: string; container: string; state: string }
@@ -77,6 +78,12 @@ export function stopEvents() {
 }
 
 export const eventsConnected = connected;
+
+/** Calls `listener` with every event while the calling component lives, for pages that use what the event says. */
+export function onEachEvent(listener: (event: LiveEvent) => void) {
+  handlers.add(listener);
+  onCleanup(() => handlers.delete(listener));
+}
 
 /** Calls `handler` for matching events while the calling component lives. A resync always matches. */
 export function onEvent(matches: (event: LiveEvent) => boolean, handler: () => void, debounceMs = 0) {

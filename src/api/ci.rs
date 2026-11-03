@@ -13,6 +13,7 @@ use super::{API_BASE, AppState};
 use super::error::{ApiError, ApiResult};
 use super::extract::{Caller, CurrentUser};
 use crate::auth::{Permission, Role};
+use crate::deploy::history::{DeploySource, Started};
 use crate::deploy::{self, Deployment, Source, tokens};
 
 #[derive(Deserialize, Default)]
@@ -20,14 +21,27 @@ pub struct DeployRequest {
     tag: Option<String>,
 }
 
-pub(super) async fn start(state: &AppState, d: Deployment, host_mounts: bool) -> ApiResult<()> {
-    let Some(revision) = deploy::begin_deploy(&state.db, &d.id).await? else {
-        return Err(ApiError::new(StatusCode::CONFLICT, "a deploy is already running"));
-    };
-    let fresh = deploy::get(&state.db, &d.id).await?.ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "no such deployment"))?;
+pub(super) async fn start(state: &AppState, d: Deployment, host_mounts: bool, started: Started) -> ApiResult<()> {
+    let mut source = DeploySource::of(&d.spec);
+    if let Source::Git { url, .. } = &d.spec.source {
+        let login = login_of(state, &d).await?;
+        source.provider = known_provider(url, login.map(|l| l.kind)).map(str::to_owned);
+    }
+    let running = || ApiError::new(StatusCode::CONFLICT, "a deploy is already running");
+    let in_flight = state.runner.live.start(&d.id).ok_or_else(running)?;
+    let Some(begun) = deploy::begin_deploy(&state.db, &d.id, &started, &source).await? else { return Err(running()) };
+    let previous = d.status.clone();
+    let fresh = Deployment { status: "deploying".into(), revision: begun.revision, last_output: String::new(), ..d };
     let runner = state.runner.clone();
-    tokio::spawn(async move { runner.deploy(fresh, revision, host_mounts).await });
+    tokio::spawn(async move { runner.deploy(in_flight, fresh, begun, host_mounts, previous).await });
     Ok(())
+}
+
+pub(super) fn started_by(caller: &Caller) -> Started {
+    match caller {
+        Caller::User(current) => Started::user(&current.user),
+        Caller::Token(grant) => Started::token(grant),
+    }
 }
 
 pub async fn deploy(
@@ -64,7 +78,7 @@ pub async fn deploy(
         None => d,
     };
     let revision_hint = d.revision + 1;
-    start(&state, d, host_mounts).await?;
+    start(&state, d, host_mounts, started_by(&caller)).await?;
     Ok((StatusCode::ACCEPTED, Json(json!({ "revision": revision_hint, "tag": tag }))))
 }
 
@@ -113,23 +127,28 @@ pub(super) async fn public_url(db: &SqlitePool) -> ApiResult<String> {
         .ok_or_else(|| ApiError::new(StatusCode::CONFLICT, "set kuroe's public URL in Settings first, CI needs it to reach this server"))
 }
 
-/// Which provider's push webhook fits a deployment: from its login, else from the repository host.
-pub fn hook_provider(url: &str, login: Option<crate::identity::Kind>) -> &'static str {
+/// The repository's provider from its login, else from the host. None for a host kuroe can't place.
+pub fn known_provider(url: &str, login: Option<crate::identity::Kind>) -> Option<&'static str> {
     use crate::identity::Kind;
     match login {
-        Some(Kind::GithubApp | Kind::GithubToken) => return "github",
-        Some(Kind::Gitlab) => return "gitlab",
-        Some(Kind::Gitea) => return "gitea",
+        Some(Kind::GithubApp | Kind::GithubToken) => return Some("github"),
+        Some(Kind::Gitlab) => return Some("gitlab"),
+        Some(Kind::Gitea) => return Some("gitea"),
         _ => {}
     }
     let host = crate::identity::normalize_host(url);
     if host == "github.com" {
-        "github"
+        Some("github")
     } else if host.contains("gitlab") {
-        "gitlab"
+        Some("gitlab")
     } else {
-        "gitea"
+        None
     }
+}
+
+/// Which provider's push webhook fits a deployment. A host kuroe can't place gets Gitea's, as before.
+pub fn hook_provider(url: &str, login: Option<crate::identity::Kind>) -> &'static str {
+    known_provider(url, login).unwrap_or("gitea")
 }
 
 fn hook_urls(base: &str, id: &str) -> Value {
@@ -328,7 +347,7 @@ pub async fn github_hook(
         Some("push") => {}
         other => return Ok((StatusCode::ACCEPTED, Json(json!({ "ignored": other })))),
     }
-    pushed(&state, &id, &body).await
+    pushed(&state, &id, &body, "GitHub").await
 }
 
 pub async fn gitlab_hook(
@@ -342,7 +361,7 @@ pub async fn gitlab_hook(
         return Err(ApiError::new(StatusCode::UNAUTHORIZED, "bad token"));
     }
     match header(&headers, &["x-gitlab-event"]) {
-        Some("Push Hook") => pushed(&state, &id, &body).await,
+        Some("Push Hook") => pushed(&state, &id, &body, "GitLab").await,
         other => Ok((StatusCode::ACCEPTED, Json(json!({ "ignored": other })))),
     }
 }
@@ -358,13 +377,13 @@ pub async fn gitea_hook(
         return Err(ApiError::new(StatusCode::UNAUTHORIZED, "bad signature"));
     }
     match header(&headers, &["x-gitea-event", "x-forgejo-event"]) {
-        Some("push") => pushed(&state, &id, &body).await,
+        Some("push") => pushed(&state, &id, &body, "Gitea").await,
         other => Ok((StatusCode::ACCEPTED, Json(json!({ "ignored": other })))),
     }
 }
 
 /// A push arrived with a valid signature: deploy when it's to the branch the deployment follows.
-async fn pushed(state: &AppState, id: &str, body: &[u8]) -> ApiResult<(StatusCode, Json<Value>)> {
+async fn pushed(state: &AppState, id: &str, body: &[u8], provider: &str) -> ApiResult<(StatusCode, Json<Value>)> {
     let payload: Value = serde_json::from_slice(body).map_err(|e| ApiError::bad_request(format!("payload is not JSON: {e}")))?;
     let d = deploy::get(&state.db, id).await?.ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "no such deployment"))?;
     let Source::Git { reference, .. } = &d.spec.source else {
@@ -374,8 +393,19 @@ async fn pushed(state: &AppState, id: &str, body: &[u8]) -> ApiResult<(StatusCod
         return Ok((StatusCode::ACCEPTED, Json(json!({ "ignored": payload["ref"] }))));
     };
     let host_mounts = creator_host_mounts(&state.db, &d).await?;
-    start(state, d, host_mounts).await?;
+    start(state, d, host_mounts, Started::webhook(pusher(provider, &payload))).await?;
     Ok((StatusCode::ACCEPTED, Json(json!({ "deploying": branch }))))
+}
+
+/// The provider and who pushed, as the payload names them.
+pub fn pusher(provider: &str, payload: &Value) -> String {
+    let who = [&payload["pusher"]["name"], &payload["user_username"], &payload["pusher"]["login"], &payload["sender"]["login"]]
+        .into_iter()
+        .find_map(|v| v.as_str().filter(|s| !s.is_empty()));
+    match who {
+        Some(who) => format!("{provider} push by {who}"),
+        None => format!("{provider} push"),
+    }
 }
 
 #[cfg(test)]
@@ -410,6 +440,14 @@ mod tests {
     }
 
     #[test]
+    fn pushes_name_who_pushed() {
+        assert_eq!(pusher("GitHub", &json!({ "pusher": { "name": "octo" } })), "GitHub push by octo");
+        assert_eq!(pusher("GitLab", &json!({ "user_username": "tanuki" })), "GitLab push by tanuki");
+        assert_eq!(pusher("Gitea", &json!({ "pusher": { "login": "tea" } })), "Gitea push by tea");
+        assert_eq!(pusher("Gitea", &json!({})), "Gitea push");
+    }
+
+    #[test]
     fn gitlab_push_payloads_carry_the_default_branch_on_the_project() {
         let payload = json!({ "ref": "refs/heads/trunk", "project": { "default_branch": "trunk" } });
         assert_eq!(wants_branch(None, &payload).as_deref(), Some("trunk"));
@@ -441,6 +479,9 @@ mod tests {
         assert_eq!(hook_provider("https://gitlab.example.com/acme/api.git", None), "gitlab");
         assert_eq!(hook_provider("https://git.example.com/acme/api.git", None), "gitea");
         assert_eq!(hook_provider("https://git.example.com/acme/api.git", Some(Kind::Gitlab)), "gitlab");
+        assert_eq!(known_provider("https://git.example.com/acme/api.git", None), None, "no guess for commit links");
+        assert_eq!(known_provider("https://bitbucket.org/acme/api.git", None), None);
+        assert_eq!(known_provider("https://git.example.com/acme/api.git", Some(Kind::Gitea)), Some("gitea"));
         assert_eq!(repo_path("https://gitlab.com/group/sub/api.git").as_deref(), Some("group/sub/api"));
         assert_eq!(repo_path("https://github.com/acme/api").as_deref(), Some("acme/api"));
         assert_eq!(repo_path("https://github.com/acme"), None);

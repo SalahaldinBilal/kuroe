@@ -1,7 +1,7 @@
 import { A, useNavigate } from "@solidjs/router";
 import { createResource, createSignal, For, Show } from "solid-js";
 import { useUser } from "../App";
-import { api, can, type Deployment, type SourceKind } from "../api";
+import { api, can, type Deployment, type DeploymentRow, type SourceKind } from "../api";
 import { Card, Note, PageHeader, StatusBadge } from "../components/ui/Blocks";
 import Button from "../components/ui/Button/Button";
 import EmptyState from "../components/ui/EmptyState/EmptyState";
@@ -10,11 +10,12 @@ import Input from "../components/ui/Input/Input";
 import { ready } from "../components/ui/Overlay";
 import SegmentedControl from "../components/ui/SegmentedControl/SegmentedControl";
 import { Bone, Busy, SkeletonEmpty, SkeletonTable } from "../components/ui/Skeleton";
+import { stepText } from "../deploys";
 import { formatAgo, formatTime } from "../format";
 import { useLive } from "../live";
 import { rowsFor, useShape } from "../shape";
 import { sourceLabel } from "../spec";
-import { EVENT_DEBOUNCE_MS, eventsConnected, isDeploymentEvent, onEvent } from "../states/eventState";
+import { EVENT_DEBOUNCE_MS, eventsConnected, isDeploymentEvent, onEachEvent, onEvent } from "../states/eventState";
 
 type Filter = "all" | "running" | "issues" | "stopped";
 
@@ -49,6 +50,21 @@ export function Deployments() {
   const [deployments, { refetch }] = createResource(api.deployments);
   onEvent(isDeploymentEvent, refetch, EVENT_DEBOUNCE_MS);
   useLive(() => !eventsConnected() && refetch());
+  const [liveSteps, setLiveSteps] = createSignal<Record<string, string>>({});
+  onEachEvent((event) => {
+    if (event.kind === "deploy.step") {
+      const { id } = event;
+      const text = stepText(event.step, event.detail);
+      setLiveSteps((steps) => ({ ...steps, [id]: text }));
+    } else if (event.kind === "deployment.status") {
+      const { id } = event;
+      setLiveSteps((steps) => Object.fromEntries(Object.entries(steps).filter(([key]) => key !== id)));
+    }
+  });
+  const stepOf = (d: DeploymentRow) =>
+    d.status === "deploying"
+      ? (liveSteps()[d.id] ?? (d.step ? stepText(d.step.step, d.step.detail) : undefined))
+      : undefined;
   const [filter, setFilter] = createSignal<Filter>("all");
   const [search, setSearch] = createSignal("");
 
@@ -185,7 +201,10 @@ export function Deployments() {
                             </div>
                           </td>
                           <td>
-                            <StatusBadge status={d.status} />
+                            <span class="hrow">
+                              <StatusBadge status={d.status} />
+                              <Show when={stepOf(d)}>{(step) => <span class="muted">{step()}</span>}</Show>
+                            </span>
                           </td>
                           <td class="hide-sm">
                             <span class="src">

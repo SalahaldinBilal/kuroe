@@ -566,7 +566,8 @@ pub async fn github_app_hook(State(state): State<AppState>, headers: HeaderMap, 
         }
         let name = d.name.clone();
         let host_mounts = creator_host_mounts(&state.db, &d).await?;
-        match start(&state, d, host_mounts).await {
+        let pushed_by = crate::deploy::history::Started::webhook(super::ci::pusher(&format!("GitHub App {}", app.name), &payload));
+        match start(&state, d, host_mounts, pushed_by).await {
             Ok(()) => started.push(name),
             Err(err) => tracing::warn!("push for {name} not deployed: {}", err.message),
         }

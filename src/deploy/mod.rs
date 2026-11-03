@@ -1,3 +1,4 @@
+pub mod history;
 pub mod runner;
 pub mod spec;
 pub mod tokens;
@@ -135,20 +136,34 @@ fn status_event(id: &str, status: &str, revision: i64) {
     crate::events::send(crate::events::Event::DeploymentStatus { id: id.to_owned(), status: status.to_owned(), revision });
 }
 
-/// Returns the new revision, or None when a deploy is already running.
-pub async fn begin_deploy(db: &SqlitePool, id: &str) -> sqlx::Result<Option<i64>> {
-    let revision = sqlx::query_scalar(
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Begun {
+    pub revision: i64,
+    /// The id of the deploy's history row.
+    pub deploy: String,
+}
+
+/// None when a deploy is already running.
+pub async fn begin_deploy(
+    db: &SqlitePool,
+    id: &str,
+    started: &history::Started,
+    source: &history::DeploySource,
+) -> anyhow::Result<Option<Begun>> {
+    let mut tx = db.begin().await?;
+    let revision: Option<i64> = sqlx::query_scalar(
         "UPDATE deployments SET status = 'deploying', revision = revision + 1, last_output = '', updated_at = ?
          WHERE id = ? AND status != 'deploying' RETURNING revision",
     )
     .bind(now())
     .bind(id)
-    .fetch_optional(db)
+    .fetch_optional(&mut *tx)
     .await?;
-    if let Some(revision) = revision {
-        status_event(id, "deploying", revision);
-    }
-    Ok(revision)
+    let Some(revision) = revision else { return Ok(None) };
+    let deploy = history::insert(&mut tx, id, revision, started, source).await?;
+    tx.commit().await?;
+    status_event(id, "deploying", revision);
+    Ok(Some(Begun { revision, deploy }))
 }
 
 pub async fn finish(db: &SqlitePool, id: &str, status: &str, output: &str) -> sqlx::Result<()> {
@@ -330,7 +345,7 @@ mod tests {
         let dev = create_user(&db, "dev", "dev-password-1", Role("elsewhere".into())).await.unwrap();
         let d = create(&db, "shop", &spec(), &owner).await.unwrap();
         let mut events = crate::events::subscribe();
-        begin_deploy(&db, &d.id).await.unwrap();
+        begin_deploy(&db, &d.id, &history::Started::user(&owner), &history::DeploySource::default()).await.unwrap();
         finish(&db, &d.id, "running", "ok").await.unwrap();
 
         let heard: Vec<Event> = std::iter::from_fn(|| events.try_recv().ok())
@@ -348,9 +363,14 @@ mod tests {
         let db = test_pool().await;
         let owner = create_user(&db, "boss", "boss-password-1", Role::owner()).await.unwrap();
         let d = create(&db, "shop", &spec(), &owner).await.unwrap();
-        assert_eq!(begin_deploy(&db, &d.id).await.unwrap(), Some(1));
-        assert_eq!(begin_deploy(&db, &d.id).await.unwrap(), None);
+        let source = history::DeploySource::default();
+        let started = history::Started::user(&owner);
+        let revision = |b: Option<Begun>| b.map(|b| b.revision);
+        assert_eq!(revision(begin_deploy(&db, &d.id, &started, &source).await.unwrap()), Some(1));
+        assert_eq!(begin_deploy(&db, &d.id, &started, &source).await.unwrap(), None);
         finish(&db, &d.id, "running", "ok").await.unwrap();
-        assert_eq!(begin_deploy(&db, &d.id).await.unwrap(), Some(2));
+        assert_eq!(revision(begin_deploy(&db, &d.id, &started, &source).await.unwrap()), Some(2));
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM deploys").fetch_one(&db).await.unwrap();
+        assert_eq!(rows, 2, "a refused deploy leaves no history row");
     }
 }

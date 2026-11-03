@@ -21,6 +21,7 @@ pub struct Token {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Grant {
     pub token_id: String,
+    pub name: String,
     pub deployment_id: String,
     pub action: String,
     pub host_mounts: bool,
@@ -98,14 +99,14 @@ pub async fn authenticate(db: &SqlitePool, plaintext: &str) -> sqlx::Result<Opti
     if !plaintext.starts_with(PREFIX) {
         return Ok(None);
     }
-    let row: Option<(String, String, String, bool)> =
-        sqlx::query_as("SELECT id, deployment_id, action, host_mounts FROM deploy_tokens WHERE token_hash = ?")
+    let row: Option<(String, String, String, String, bool)> =
+        sqlx::query_as("SELECT id, name, deployment_id, action, host_mounts FROM deploy_tokens WHERE token_hash = ?")
             .bind(hash(plaintext))
             .fetch_optional(db)
             .await?;
-    let Some((token_id, deployment_id, action, host_mounts)) = row else { return Ok(None) };
+    let Some((token_id, name, deployment_id, action, host_mounts)) = row else { return Ok(None) };
     sqlx::query("UPDATE deploy_tokens SET last_used_at = ? WHERE id = ?").bind(now()).bind(&token_id).execute(db).await?;
-    Ok(Some(Grant { token_id, deployment_id, action, host_mounts }))
+    Ok(Some(Grant { token_id, name, deployment_id, action, host_mounts }))
 }
 
 #[cfg(test)]
@@ -127,7 +128,7 @@ mod tests {
         assert_eq!(stored.len(), 64);
 
         let grant = authenticate(&db, &plaintext).await.unwrap().unwrap();
-        assert_eq!(grant, Grant { token_id: token.id, deployment_id: d.id.clone(), action: "deploy".into(), host_mounts: false });
+        assert_eq!(grant, Grant { token_id: token.id, name: "ci".into(), deployment_id: d.id.clone(), action: "deploy".into(), host_mounts: false });
         assert!(authenticate(&db, "kuroe_0000").await.unwrap().is_none());
         assert!(authenticate(&db, "not-a-token").await.unwrap().is_none());
         assert!(list(&db, &d.id).await.unwrap()[0].last_used_at.is_some());

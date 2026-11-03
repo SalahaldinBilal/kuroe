@@ -13,6 +13,7 @@ use super::error::{ApiError, ApiResult};
 use super::extract::{Caller, CurrentUser};
 use super::AppState;
 use crate::auth::Permission;
+use crate::deploy::history::StepRecord;
 use crate::deploy::runner::{self, Strategy};
 use crate::deploy::spec::{GIT_TOKEN_REF, RunMode, valid_name};
 use crate::deploy::{self, Deployment, Source, Spec};
@@ -48,6 +49,7 @@ pub struct Detail {
     strategy_note: Option<&'static str>,
     /// Saved secret names by id, for the references in the spec.
     secret_names: BTreeMap<String, String>,
+    last_deploy: Option<String>,
 }
 
 fn present(current: &CurrentUser, mut d: Deployment) -> Deployment {
@@ -186,7 +188,15 @@ async fn containers_by_deployment(state: &AppState) -> Option<HashMap<String, Ve
     Some(grouped)
 }
 
-pub async fn list(State(state): State<AppState>, current: CurrentUser) -> ApiResult<Json<Vec<Deployment>>> {
+#[derive(Serialize)]
+pub struct ListRow {
+    #[serde(flatten)]
+    pub deployment: Deployment,
+    /// The step a running deploy is in.
+    pub step: Option<StepRecord>,
+}
+
+pub async fn list(State(state): State<AppState>, current: CurrentUser) -> ApiResult<Json<Vec<ListRow>>> {
     let all = deploy::list(&state.db).await?;
     let observed = containers_by_deployment(&state).await;
     Ok(Json(
@@ -199,7 +209,8 @@ pub async fn list(State(state): State<AppState>, current: CurrentUser) -> ApiRes
                     let containers = observed.get(&d.id).map(Vec::as_slice).unwrap_or_default();
                     d.status = live_status(&d.status, containers, d.spec.mode == RunMode::Stack);
                 }
-                present(&current, d)
+                let step = state.runner.live.current_step(&d.id);
+                ListRow { deployment: present(&current, d), step }
             })
             .collect(),
     ))
@@ -276,7 +287,9 @@ pub async fn detail(State(state): State<AppState>, current: CurrentUser, Path(id
     let permissions = current.access.on(&id);
     let (strategy, strategy_note) = runner::strategy(&d.spec);
     let secret_names = crate::saved_secrets::names(&state.db, &d.spec).await?;
-    Ok(Json(Detail { deployment: present(&current, d), containers, permissions, strategy, strategy_note, secret_names }))
+    let last_deploy = crate::deploy::history::latest(&state.db, &id).await?;
+    let deployment = present(&current, d);
+    Ok(Json(Detail { deployment, containers, permissions, strategy, strategy_note, secret_names, last_deploy }))
 }
 
 pub async fn update(
@@ -300,6 +313,15 @@ pub async fn update(
     spec.clear_referenced_values();
     deploy::update_spec(&state.db, &id, &spec).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// The deploy stops where it is and cleans up after itself, then reports through the usual status event.
+pub async fn cancel_deploy(State(state): State<AppState>, current: CurrentUser, Path(id): Path<String>) -> ApiResult<StatusCode> {
+    access::deployment(&state, &current, &id, Permission::DepDeploy).await?;
+    if !state.runner.live.cancel(&id, &current.user.username) {
+        return Err(ApiError::new(StatusCode::CONFLICT, "no deploy is running"));
+    }
+    Ok(StatusCode::ACCEPTED)
 }
 
 pub async fn stop(State(state): State<AppState>, current: CurrentUser, Path(id): Path<String>) -> ApiResult<Json<String>> {
@@ -370,6 +392,7 @@ pub async fn upload_site(
             (d, grant.host_mounts)
         }
     };
+    let started = super::ci::started_by(&caller);
     if !matches!(d.spec.source, Source::Static {}) {
         return Err(ApiError::bad_request("this deployment doesn't take uploaded site files"));
     }
@@ -380,7 +403,7 @@ pub async fn upload_site(
     tokio::fs::create_dir_all(path.parent().unwrap()).await.map_err(anyhow::Error::from)?;
     tokio::fs::write(&path, &body).await.map_err(anyhow::Error::from)?;
     if query.deploy {
-        super::ci::start(&state, d, host_mounts).await?;
+        super::ci::start(&state, d, host_mounts, started).await?;
         return Ok(StatusCode::ACCEPTED);
     }
     Ok(StatusCode::NO_CONTENT)

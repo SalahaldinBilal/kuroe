@@ -30,7 +30,7 @@ pub const SPA_HEADER: &str = "X-Kuroe-Spa";
 const ROOT: &str = "/sites";
 const PROJECT_PREFIX: &str = "site/";
 const BUILD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
-const LABEL_SITE_BUILD: &str = "kuroe.site_build";
+pub const LABEL_SITE_BUILD: &str = "kuroe.site_build";
 const LABEL_IMAGE: &str = "kuroe.image";
 
 /// One fixed config for every site. A path under `/<site>/<revision>/` is a file, a folder's `index.html`, or for a

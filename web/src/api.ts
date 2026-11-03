@@ -274,6 +274,73 @@ export interface Deployment {
   updated_at: number;
 }
 
+export type DeployStatus = "deploying" | "running" | "failed" | "cancelled";
+
+export type DeployStepName =
+  | "resolving_secrets"
+  | "cloning"
+  | "checking_pool"
+  | "building"
+  | "pulling"
+  | "starting"
+  | "health_check"
+  | "switching_traffic"
+  | "draining"
+  | "stopping_old"
+  | "publishing_routes"
+  | "installing_files"
+  | "restoring_routes"
+  | "stopping_new"
+  | "cleaning_up";
+
+export interface DeployStep {
+  step: DeployStepName;
+  detail?: string;
+  /** null while the step is still to come. */
+  started_ms: number | null;
+  finished_ms: number | null;
+  failed?: boolean;
+}
+
+export interface DeploySource {
+  kind: string;
+  url?: string;
+  provider?: "github" | "gitlab" | "gitea";
+  reference?: string;
+  commit?: string;
+  image?: string;
+  digest?: string;
+}
+
+export interface DeploySummary {
+  id: string;
+  revision: number;
+  status: DeployStatus;
+  trigger: "ui" | "deploy_token" | "webhook";
+  triggered_by: string;
+  user_id: string | null;
+  token_id: string | null;
+  source: DeploySource;
+  started_at: number;
+  finished_at: number | null;
+}
+
+export interface DeployDetail extends DeploySummary {
+  output: string;
+  steps: DeployStep[];
+}
+
+export type LiveDeployMessage =
+  | { kind: "snapshot"; deploy: string | null; lines: string[]; partial: string | null; steps: DeployStep[] }
+  | { kind: "line"; text: string }
+  | { kind: "partial"; text: string | null }
+  | { kind: "steps"; steps: DeployStep[] };
+
+export interface DeploymentRow extends Deployment {
+  /** The step a running deploy is in. */
+  step: DeployStep | null;
+}
+
 export interface ContainerRow {
   id: string;
   name: string;
@@ -293,6 +360,8 @@ export interface DeploymentDetail extends Deployment {
   active_project: string | null;
   /** Saved secret names by id, for the references in the spec. */
   secret_names: Record<string, string>;
+  /** The newest deploy in the history. */
+  last_deploy: string | null;
 }
 
 export type ProxyMode = "off" | "managed" | "external";
@@ -717,11 +786,19 @@ export const api = {
   saveSettings: (values: Record<string, string>) => request<void>("PUT", "/settings", values),
   secretKey: () => request<{ kind: "file" | "data_dir"; path: string }>("GET", "/settings/secret-key"),
 
-  deployments: () => request<Deployment[]>("GET", "/deployments"),
+  deployments: () => request<DeploymentRow[]>("GET", "/deployments"),
   deployment: (id: string) => request<DeploymentDetail>("GET", `/deployments/${id}`),
   createDeployment: (name: string, spec: Spec) => request<Deployment>("POST", "/deployments", { name, spec }),
   updateDeployment: (id: string, spec: Spec) => request<void>("PUT", `/deployments/${id}`, spec),
   deploy: (id: string) => request<void>("POST", `/deployments/${id}/deploy`),
+  cancelDeploy: (id: string) => request<void>("POST", `/deployments/${id}/deploy/cancel`),
+  deploySocket: (id: string) => socketUrl(`/deployments/${id}/deploy/ws`),
+  deploys: (id: string, offset = 0, limit = 20) =>
+    request<{ deploys: DeploySummary[]; more: boolean }>(
+      "GET",
+      `/deployments/${id}/deploys?offset=${offset}&limit=${limit}`,
+    ),
+  deployDetail: (id: string, deploy: string) => request<DeployDetail>("GET", `/deployments/${id}/deploys/${deploy}`),
   stop: (id: string) => request<string>("POST", `/deployments/${id}/stop`),
   restart: (id: string) => request<string>("POST", `/deployments/${id}/restart`),
   removeDeployment: (id: string) => request<void>("DELETE", `/deployments/${id}`),

@@ -10,6 +10,8 @@ pub const DATE_FORMAT: &[FormatItem<'static>] = format_description!("[year]-[mon
 pub struct Retention {
     pub metrics_days: i64,
     pub logs_days: i64,
+    /// Finished deploys kept per deployment.
+    pub deploys: i64,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -19,17 +21,21 @@ pub struct Pruned {
 }
 
 pub async fn load(db: &SqlitePool) -> anyhow::Result<Retention> {
-    async fn days(db: &SqlitePool, key: &str) -> anyhow::Result<i64> {
+    async fn count(db: &SqlitePool, key: &str, default: i64, unit: &str) -> anyhow::Result<i64> {
         let value: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key = ?").bind(key).fetch_optional(db).await?;
         match value.filter(|v| !v.is_empty()) {
-            None => Ok(30),
+            None => Ok(default),
             Some(v) => match v.parse::<i64>() {
                 Ok(n) if n >= 1 => Ok(n),
-                _ => anyhow::bail!("setting {key} must be a whole number of days, got {v}"),
+                _ => anyhow::bail!("setting {key} must be a whole number of {unit}, got {v}"),
             },
         }
     }
-    Ok(Retention { metrics_days: days(db, "retention_metrics_days").await?, logs_days: days(db, "retention_logs_days").await? })
+    Ok(Retention {
+        metrics_days: count(db, "retention_metrics_days", 30, "days").await?,
+        logs_days: count(db, "retention_logs_days", 30, "days").await?,
+        deploys: count(db, "retention_deploys", crate::deploy::history::DEFAULT_KEEP, "deploys").await?,
+    })
 }
 
 pub async fn prune_rows(db: &SqlitePool, now: i64, retention: Retention) -> sqlx::Result<u64> {
@@ -93,7 +99,7 @@ pub fn prune_files(logs_dir: &Path, now: i64, logs_days: i64) -> std::io::Result
 
 pub async fn prune(db: &SqlitePool, logs_dir: &Path, now: i64) -> anyhow::Result<Pruned> {
     let retention = load(db).await?;
-    let rows = prune_rows(db, now, retention).await?;
+    let rows = prune_rows(db, now, retention).await? + crate::deploy::history::prune(db, retention.deploys).await?;
     let dir = logs_dir.to_owned();
     let files = tokio::task::spawn_blocking(move || prune_files(&dir, now, retention.logs_days)).await??;
     Ok(Pruned { rows, files })
@@ -110,7 +116,7 @@ mod tests {
 
     const HOUR: i64 = 3_600;
     const NOW: i64 = 1_793_448_000;
-    const RETAIN: Retention = Retention { metrics_days: 30, logs_days: 30 };
+    const RETAIN: Retention = Retention { metrics_days: 30, logs_days: 30, deploys: 50 };
 
     async fn insert_at(db: &SqlitePool, ts: i64) {
         let series = crate::collect::stats::series_id(db, "d", "s", "c").await.unwrap();

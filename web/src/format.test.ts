@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { formatAgo } from "./format";
+import { formatAgo, formatDuration } from "./format";
+
+describe("formatDuration", () => {
+  it("keeps tenths only for short steps", () => {
+    expect(formatDuration(0.42)).toBe("0.4s");
+    expect(formatDuration(42.7)).toBe("42s");
+    expect(formatDuration(192)).toBe("3m 12s");
+    expect(formatDuration(3900)).toBe("1h 5m");
+    expect(formatDuration(-1)).toBe("0.0s");
+  });
+});
 
 describe("formatAgo", () => {
   const now = Date.UTC(2026, 9, 31, 12, 0) / 1000;

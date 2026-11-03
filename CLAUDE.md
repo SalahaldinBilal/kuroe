@@ -17,7 +17,7 @@ src/
     preview.rs   /preview/<container>/<port>/ reverse proxy
     tests.rs     API tests (need the Docker socket, see Commands)
   auth/          sessions, roles and permissions (rbac.rs), API tokens, passwords, login rate limit
-  deploy/        spec (sources, site options, secret_refs), runner (deploys, pool, limits), deploy tokens, grants
+  deploy/        spec (sources, site options, secret_refs), runner (deploys, live output, pool, limits), history (the deploys table), deploy tokens, grants
   docker/        bollard wrappers, compose override writer (rewrite.rs), admission check (pool), network limits (netlimit.rs)
   proxy/         Traefik container and route files, certificates, blue/green, web server configs (webserver/)
   collect/       container stats, host metrics, logs, storage accounting, retention

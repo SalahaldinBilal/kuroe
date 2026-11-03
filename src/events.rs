@@ -19,6 +19,8 @@ pub enum Event {
     DeploymentStatus { id: String, status: String, revision: i64 },
     #[serde(rename = "deployment.changed")]
     DeploymentChanged { id: String },
+    #[serde(rename = "deploy.step")]
+    DeployStep { id: String, step: crate::deploy::history::Step, detail: Option<String> },
     #[serde(rename = "container.state")]
     ContainerState { deployment: String, container: String, state: String },
     #[serde(rename = "proxy.traefik")]
@@ -30,7 +32,9 @@ pub enum Event {
 impl Event {
     pub fn visible_to(&self, access: &Access) -> bool {
         match self {
-            Event::DeploymentStatus { id, .. } | Event::DeploymentChanged { id } => access.can(id, Permission::DepView),
+            Event::DeploymentStatus { id, .. } | Event::DeploymentChanged { id } | Event::DeployStep { id, .. } => {
+                access.can(id, Permission::DepView)
+            }
             Event::ContainerState { deployment, .. } => access.can(deployment, Permission::DepView),
             Event::ProxyTraefik { .. } => true,
             Event::RunnerInstance { .. } => access.has(Permission::Runners),
@@ -134,5 +138,8 @@ mod tests {
     fn events_serialize_with_their_kind() {
         let json = serde_json::to_value(Event::DeploymentStatus { id: "d1".into(), status: "running".into(), revision: 3 }).unwrap();
         assert_eq!(json, serde_json::json!({ "kind": "deployment.status", "id": "d1", "status": "running", "revision": 3 }));
+        let step = Event::DeployStep { id: "d1".into(), step: crate::deploy::history::Step::Building, detail: Some("web".into()) };
+        let json = serde_json::to_value(step).unwrap();
+        assert_eq!(json, serde_json::json!({ "kind": "deploy.step", "id": "d1", "step": "building", "detail": "web" }));
     }
 }

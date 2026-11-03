@@ -33,6 +33,7 @@ const KEYS = [
   "default_net_conn_out_mbit",
   "retention_metrics_days",
   "retention_logs_days",
+  "retention_deploys",
   "http_access",
   "trusted_proxies",
 ] as const;
@@ -52,6 +53,7 @@ const LABELS: Record<string, string> = {
   default_net_conn_out_mbit: "Default upload per connection",
   retention_metrics_days: "Metrics retention",
   retention_logs_days: "Logs retention",
+  retention_deploys: "Deploy history",
 };
 
 export function Settings() {
@@ -365,6 +367,21 @@ export function Settings() {
                 value={text("retention_logs_days")}
                 onValue={(v) => set("retention_logs_days", v)}
                 after={<Unit>days</Unit>}
+              />
+            </SettingRow>
+            <SettingRow
+              label="Deploy history"
+              description="Each deployment keeps this many finished deploys with their output. Default is 50."
+            >
+              <Input
+                mono
+                inputMode="numeric"
+                label="Deploy history"
+                placeholder="50"
+                disabled={!canWrite()}
+                value={text("retention_deploys")}
+                onValue={(v) => set("retention_deploys", v)}
+                after={<Unit>deploys</Unit>}
               />
             </SettingRow>
           </Card>

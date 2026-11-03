@@ -38,6 +38,7 @@ const SERVER_SETTINGS: &[&str] = &[
     "proxy_https_port",
     "proxy_mode",
     "public_url",
+    "retention_deploys",
     "retention_logs_days",
     "retention_metrics_days",
     "web_server",
@@ -1335,6 +1336,20 @@ mod tests {
             ("api/DB_PASSWORD".to_owned(), "hunter2".to_owned()),
             ("site/@git_token".to_owned(), "ghp_secret".to_owned()),
         ])
+    }
+
+    #[tokio::test]
+    async fn exports_leave_the_deploy_history_out() {
+        use crate::deploy::history::{self, DeploySource, Started};
+        let db = test_pool().await;
+        let owner = seed(&db).await;
+        let site: String = sqlx::query_scalar("SELECT id FROM deployments WHERE name = 'site'").fetch_one(&db).await.unwrap();
+        let begun = deploy::begin_deploy(&db, &site, &Started::user(&owner), &DeploySource::default()).await.unwrap().unwrap();
+        history::close(&db, &begun.deploy, "running", "built by the history marker", &[]).await.unwrap();
+        deploy::finish(&db, &site, "running", "").await.unwrap();
+
+        let text = to_toml(&export_server(&db, true).await.unwrap()).unwrap();
+        assert!(!text.contains("history marker") && !text.contains(&begun.deploy), "{text}");
     }
 
     #[tokio::test]

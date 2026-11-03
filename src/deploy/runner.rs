@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{ExitStatus, Stdio};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
@@ -12,17 +13,21 @@ use futures::StreamExt;
 use serde::Serialize;
 use serde_json::Value;
 use sqlx::SqlitePool;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
+use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
 
+use super::history::{self, DeploySource, Planned, Step, StepRecord};
 use super::spec::{RunMode, SiteBuild, Source, Spec, project_name};
-use super::{Deployment, finish, set_active_project};
+use super::{Begun, Deployment, finish, set_active_project};
 use crate::docker::admission::{self, Pool, Running};
 use crate::docker::netlimit;
 use crate::identity;
 use crate::docker::rewrite::{
     self, Build, Defaults, LABEL_DEPLOYMENT, LABEL_MANAGED, LABEL_SERVICE, PROXY_NETWORK, Rewritten, SWARM_NETWORK,
 };
-use crate::proxy::bluegreen::{self, Event, Phase, Step};
+use crate::proxy::bluegreen::{self, Event, Phase, Step as Rollout};
 use crate::proxy::certs::{self, CertMode};
 use crate::proxy::routes::{self, Route};
 use crate::proxy::traefik::Traefik;
@@ -39,6 +44,8 @@ const LABEL_PROJECT: &str = "com.docker.compose.project";
 const LABEL_STACK: &str = "com.docker.stack.namespace";
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(60);
 pub const ADMISSION_WINDOW_SECS: i64 = 300;
+const SAVE_EVERY: Duration = Duration::from_secs(3);
+const SECRET_MASK: &str = "********";
 
 #[derive(Clone)]
 pub struct Runner {
@@ -46,6 +53,179 @@ pub struct Runner {
     pub docker: Docker,
     pub data_dir: PathBuf,
     pub traefik: Traefik,
+    pub live: LiveDeploys,
+}
+
+/// Deploys that are running, by deployment id: their output and steps so far, and a way to cancel them.
+#[derive(Clone, Default)]
+pub struct LiveDeploys(Arc<Mutex<HashMap<String, Arc<LiveDeploy>>>>);
+
+pub struct LiveDeploy {
+    deployment: String,
+    /// The history row, set once the deploy has one.
+    deploy: OnceLock<String>,
+    token: CancellationToken,
+    by: Mutex<Option<String>>,
+    state: Mutex<LiveState>,
+    tx: broadcast::Sender<LiveMessage>,
+}
+
+#[derive(Default)]
+struct LiveState {
+    lines: Vec<String>,
+    partial: Option<String>,
+    steps: Vec<StepRecord>,
+    unsaved: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LiveMessage {
+    Snapshot { deploy: Option<String>, lines: Vec<String>, partial: Option<String>, steps: Vec<StepRecord> },
+    Line { text: String },
+    /// The line being written before its newline, like a progress bar. The next Line replaces it.
+    Partial { text: Option<String> },
+    Steps { steps: Vec<StepRecord> },
+}
+
+/// Holds a deploy's entry until the deploy is done. Taken before the deployment shows as deploying,
+/// so a page that sees that status can always follow the deploy.
+pub struct InFlight {
+    deploys: LiveDeploys,
+    live: Arc<LiveDeploy>,
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        let mut map = self.deploys.0.lock().unwrap();
+        if map.get(&self.live.deployment).is_some_and(|l| Arc::ptr_eq(l, &self.live)) {
+            map.remove(&self.live.deployment);
+        }
+    }
+}
+
+impl LiveDeploys {
+    /// None while another deploy of this deployment holds its entry.
+    pub fn start(&self, deployment: &str) -> Option<InFlight> {
+        let mut map = self.0.lock().unwrap();
+        if map.contains_key(deployment) {
+            return None;
+        }
+        let live = Arc::new(LiveDeploy {
+            deployment: deployment.to_owned(),
+            deploy: OnceLock::new(),
+            token: CancellationToken::new(),
+            by: Mutex::new(None),
+            state: Mutex::default(),
+            tx: broadcast::channel(512).0,
+        });
+        map.insert(deployment.to_owned(), live.clone());
+        Some(InFlight { deploys: self.clone(), live })
+    }
+
+    /// False when no deploy of this deployment is running.
+    pub fn cancel(&self, deployment: &str, by: &str) -> bool {
+        let Some(live) = self.0.lock().unwrap().get(deployment).cloned() else { return false };
+        *live.by.lock().unwrap() = Some(by.to_owned());
+        live.token.cancel();
+        true
+    }
+
+    /// Everything the running deploy has done so far, then what comes after. The receiver closes when the deploy ends.
+    pub fn follow(&self, deployment: &str) -> Option<(LiveMessage, broadcast::Receiver<LiveMessage>)> {
+        let live = self.0.lock().unwrap().get(deployment).cloned()?;
+        Some(live.follow())
+    }
+
+    /// The step the running deploy of this deployment is in.
+    pub fn current_step(&self, deployment: &str) -> Option<StepRecord> {
+        let live = self.0.lock().unwrap().get(deployment).cloned()?;
+        let state = live.state.lock().unwrap();
+        history::current_step(&state.steps).cloned()
+    }
+}
+
+impl LiveDeploy {
+    fn follow(&self) -> (LiveMessage, broadcast::Receiver<LiveMessage>) {
+        let state = self.state.lock().unwrap();
+        let snapshot = LiveMessage::Snapshot {
+            deploy: self.deploy.get().cloned(),
+            lines: state.lines.clone(),
+            partial: state.partial.clone(),
+            steps: state.steps.clone(),
+        };
+        (snapshot, self.tx.subscribe())
+    }
+
+    fn line(&self, text: &str) {
+        let mut state = self.state.lock().unwrap();
+        state.lines.push(text.to_owned());
+        state.partial = None;
+        state.unsaved = true;
+        let _ = self.tx.send(LiveMessage::Line { text: text.to_owned() });
+    }
+
+    fn partial(&self, text: Option<String>) {
+        let mut state = self.state.lock().unwrap();
+        if state.partial != text {
+            state.partial.clone_from(&text);
+            let _ = self.tx.send(LiveMessage::Partial { text });
+        }
+    }
+
+    fn change_steps(&self, change: impl FnOnce(&mut Vec<StepRecord>)) -> Vec<StepRecord> {
+        let mut state = self.state.lock().unwrap();
+        change(&mut state.steps);
+        state.unsaved = true;
+        let _ = self.tx.send(LiveMessage::Steps { steps: state.steps.clone() });
+        state.steps.clone()
+    }
+
+    fn step(&self, step: Step, detail: Option<String>) {
+        let event_detail = detail.clone();
+        self.change_steps(|steps| history::start_step(steps, step, detail, history::now_ms()));
+        crate::events::send(crate::events::Event::DeployStep { id: self.deployment.clone(), step, detail: event_detail });
+    }
+
+    fn unsaved(&self) -> Option<(String, Vec<StepRecord>)> {
+        let mut state = self.state.lock().unwrap();
+        if !state.unsaved {
+            return None;
+        }
+        state.unsaved = false;
+        Some((state.lines.join("\n"), state.steps.clone()))
+    }
+}
+
+/// Writes the output to the deploy's row every few seconds, so a crash keeps what was there.
+async fn save_progress(db: SqlitePool, live: Arc<LiveDeploy>, deploy: String, stop: CancellationToken) {
+    let mut ticker = tokio::time::interval(SAVE_EVERY);
+    loop {
+        tokio::select! {
+            () = stop.cancelled() => return,
+            _ = ticker.tick() => {}
+        }
+        if let Some((output, steps)) = live.unsaved()
+            && let Err(err) = history::progress(&db, &deploy, &output, &steps).await
+        {
+            tracing::warn!("saving deploy output: {err:#}");
+        }
+    }
+}
+
+/// The values a deploy must never print: secret env values, saved secrets and the git token.
+fn secret_values(spec: &Spec) -> Vec<&str> {
+    let mut values: Vec<&str> = spec
+        .container
+        .env
+        .iter()
+        .filter(|(key, _)| spec.secrets.contains(*key) || spec.secret_refs.contains_key(*key))
+        .map(|(_, value)| value.as_str())
+        .collect();
+    if let Source::Git { token: Some(token), .. } = &spec.source {
+        values.push(token);
+    }
+    values
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -82,6 +262,62 @@ pub fn next_project(name: &str, strategy: Strategy, active: Option<&str>) -> Str
     }
 }
 
+/// The steps after the build, which only depend on how the new version replaces the old one.
+fn rollout_plan(strategy: Strategy, project: &str, old: Option<&str>) -> Vec<Planned> {
+    let project = Some(project.to_owned());
+    let mut plan = Vec::new();
+    if strategy != Strategy::Stack {
+        plan.push((Step::Pulling, None));
+    }
+    plan.push((Step::Starting, project.clone()));
+    match strategy {
+        Strategy::BlueGreen => {
+            plan.push((Step::HealthCheck, project.clone()));
+            plan.push((Step::SwitchingTraffic, project));
+            if let Some(old) = old {
+                plan.push((Step::Draining, Some(old.to_owned())));
+            }
+        }
+        Strategy::Recreate | Strategy::Stack | Strategy::Static => plan.push((Step::PublishingRoutes, None)),
+    }
+    if let Some(old) = old {
+        plan.push((Step::StoppingOld, Some(old.to_owned())));
+    }
+    plan
+}
+
+/// What a deploy will do once its secrets are resolved, as far as the spec tells before the Compose file is read.
+fn first_plan(d: &Deployment) -> Vec<Planned> {
+    let mut plan = Vec::new();
+    if matches!(d.spec.source, Source::Git { .. }) {
+        plan.push((Step::Cloning, None));
+    }
+    if d.spec.is_static() {
+        let site = d.spec.site.as_ref();
+        if let Source::Image { image, .. } = &d.spec.source {
+            plan.push((Step::Pulling, Some(image.clone())));
+        }
+        if site.is_some_and(|s| !matches!(s.build, SiteBuild::None)) {
+            plan.push((Step::Building, Some("site".into())));
+        }
+        plan.extend([(Step::InstallingFiles, None), (Step::PublishingRoutes, None)]);
+        return plan;
+    }
+    let (strategy, _) = strategy(&d.spec);
+    let project = next_project(&d.name, strategy, d.active_project.as_deref());
+    plan.push((Step::CheckingPool, None));
+    plan.extend(rollout_plan(strategy, &project, d.active_project.as_deref().filter(|p| *p != project)));
+    plan
+}
+
+/// The rest of the deploy once the Compose model says what gets built.
+fn build_plan(strategy: Strategy, project: &str, old: Option<&str>, builds: &[Build]) -> Vec<Planned> {
+    let mut plan = vec![(Step::CheckingPool, None)];
+    plan.extend(builds.iter().map(|b| (Step::Building, Some(b.service.clone()))));
+    plan.extend(rollout_plan(strategy, project, old));
+    plan
+}
+
 struct ProjectContainer {
     name: String,
     ip: Option<String>,
@@ -91,11 +327,20 @@ struct ProjectContainer {
 /// Color codes alone on a line move to the next one, and a line redrawn with `\r` keeps its last frame.
 #[derive(Default)]
 struct Lines {
+    bytes: Vec<u8>,
     partial: String,
     carried: String,
 }
 
 impl Lines {
+    /// For process output, which can split a character between reads. A newline never sits inside one.
+    fn push_bytes(&mut self, chunk: &[u8]) -> Vec<String> {
+        self.bytes.extend_from_slice(chunk);
+        let Some(end) = self.bytes.iter().rposition(|b| *b == b'\n') else { return Vec::new() };
+        let complete: Vec<u8> = self.bytes.drain(..=end).collect();
+        self.push(&String::from_utf8_lossy(&complete))
+    }
+
     fn push(&mut self, chunk: &str) -> Vec<String> {
         self.partial.push_str(chunk);
         let mut out = Vec::new();
@@ -106,7 +351,20 @@ impl Lines {
         out
     }
 
+    /// The line written so far, as it shows now, for the live view.
+    fn pending(&self) -> Option<String> {
+        let valid = match std::str::from_utf8(&self.bytes) {
+            Ok(text) => text,
+            Err(err) => std::str::from_utf8(&self.bytes[..err.valid_up_to()]).unwrap_or_default(),
+        };
+        let text = format!("{}{}{valid}", self.carried, self.partial);
+        let frame = text.rsplit('\r').find(|frame| !strip_ansi(frame).trim().is_empty())?;
+        Some(frame.trim_end().to_owned())
+    }
+
     fn finish(&mut self) -> Vec<String> {
+        let bytes = std::mem::take(&mut self.bytes);
+        self.partial.push_str(&String::from_utf8_lossy(&bytes));
         let rest = std::mem::take(&mut self.partial);
         let mut out = Vec::new();
         self.take(&rest, &mut out);
@@ -156,18 +414,117 @@ fn strip_ansi(text: &str) -> String {
     out
 }
 
-pub struct Log(Vec<String>);
+#[derive(Default)]
+pub struct Log {
+    lines: Vec<String>,
+    live: Option<Arc<LiveDeploy>>,
+    hidden: Vec<String>,
+    /// What this deploy deploys, with the commit or digest once known.
+    source: DeploySource,
+}
 
 impl Log {
+    fn live(live: Arc<LiveDeploy>, source: DeploySource) -> Self {
+        Log { live: Some(live), source, ..Default::default() }
+    }
+
+    /// Masks these values wherever they show up, whatever their length.
+    fn hide<'a>(&mut self, values: impl IntoIterator<Item = &'a str>) {
+        for value in values {
+            if !value.is_empty() && !self.hidden.iter().any(|h| h == value) {
+                self.hidden.push(value.to_owned());
+            }
+        }
+        self.hidden.sort_by_key(|v| std::cmp::Reverse(v.len()));
+    }
+
+    fn masked(&self, mut text: String) -> String {
+        for value in &self.hidden {
+            if text.contains(value.as_str()) {
+                text = text.replace(value.as_str(), SECRET_MASK);
+            }
+        }
+        text
+    }
+
     fn line(&mut self, text: impl Into<String>) {
-        let text = text.into();
+        let text = self.masked(text.into());
         tracing::debug!("{text}");
-        self.0.push(text);
+        if let Some(live) = &self.live {
+            live.line(&text);
+        }
+        self.lines.push(text);
+    }
+
+    fn partial(&self, text: Option<String>) {
+        if let Some(live) = &self.live {
+            live.partial(text.map(|t| self.masked(t)));
+        }
+    }
+
+    fn step(&self, step: Step, detail: Option<&str>) {
+        if let Some(live) = &self.live {
+            live.step(step, detail.map(str::to_owned));
+        }
+    }
+
+    /// Replaces the steps still to come.
+    fn plan(&self, upcoming: &[Planned]) {
+        if let Some(live) = &self.live {
+            live.change_steps(|steps| history::plan_steps(steps, upcoming));
+        }
+    }
+
+    fn fail_step(&self) {
+        if let Some(live) = &self.live {
+            live.change_steps(|steps| history::fail_step(steps));
+        }
     }
 
     fn text(&self) -> String {
-        self.0.join("\n")
+        self.lines.join("\n")
     }
+}
+
+/// Runs a docker CLI command and logs its output line by line as it comes. Returns the exit status and stdout.
+async fn run(mut command: Command, log: &mut Log, log_stdout: bool, what: &str) -> anyhow::Result<(ExitStatus, String)> {
+    command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    let mut child = command.spawn().with_context(|| format!("running {what}, is the docker CLI installed?"))?;
+    let (Some(mut stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        bail!("{what} started without its output pipes");
+    };
+    let (mut out_lines, mut err_lines) = (Lines::default(), Lines::default());
+    let (mut out_buf, mut err_buf) = (vec![0u8; 8192], vec![0u8; 8192]);
+    let (mut out_open, mut err_open) = (true, true);
+    let mut captured = Vec::new();
+    while out_open || err_open {
+        let (from_stdout, read) = tokio::select! {
+            read = stdout.read(&mut out_buf), if out_open => (true, read?),
+            read = stderr.read(&mut err_buf), if err_open => (false, read?),
+        };
+        match (from_stdout, read) {
+            (true, 0) => out_open = false,
+            (false, 0) => err_open = false,
+            (true, n) => {
+                captured.extend_from_slice(&out_buf[..n]);
+                if log_stdout {
+                    out_lines.push_bytes(&out_buf[..n]).into_iter().for_each(|line| log.line(line));
+                    log.partial(out_lines.pending());
+                }
+            }
+            (false, n) => {
+                err_lines.push_bytes(&err_buf[..n]).into_iter().for_each(|line| log.line(line));
+                log.partial(err_lines.pending());
+            }
+        }
+    }
+    if log_stdout {
+        out_lines.finish().into_iter().for_each(|line| log.line(line));
+    }
+    err_lines.finish().into_iter().for_each(|line| log.line(line));
+    log.partial(None);
+    let status = child.wait().await?;
+    Ok((status, String::from_utf8_lossy(&captured).into_owned()))
 }
 
 impl Runner {
@@ -187,23 +544,132 @@ impl Runner {
         Sites { docker: self.docker.clone() }
     }
 
-    pub async fn deploy(&self, deployment: Deployment, revision: i64, host_mounts: bool) {
-        let mut log = Log(Vec::new());
-        let status = match self.try_deploy(&deployment, revision, host_mounts, &mut log).await {
-            Ok(()) => "running",
-            Err(err) => {
+    /// `in_flight` comes from `live.start`, taken before `begin_deploy`. `previous` is the status before this deploy,
+    /// for when it's cancelled before touching anything.
+    pub async fn deploy(&self, in_flight: InFlight, deployment: Deployment, begun: Begun, host_mounts: bool, previous: String) {
+        let live = in_flight.live.clone();
+        let _ = live.deploy.set(begun.deploy.clone());
+        let mut log = Log::live(live.clone(), DeploySource::of(&deployment.spec));
+        let stop_saving = CancellationToken::new();
+        let saver = tokio::spawn(save_progress(self.db.clone(), live.clone(), begun.deploy.clone(), stop_saving.clone()));
+        let outcome = tokio::select! {
+            result = self.try_deploy(&deployment, begun.revision, host_mounts, &mut log) => Some(result),
+            () = live.token.cancelled() => None,
+        };
+        let (status, history_status) = match outcome {
+            Some(Ok(())) => ("running".to_owned(), "running"),
+            Some(Err(err)) => {
+                log.fail_step();
                 log.line(format!("deploy failed: {err:#}"));
-                "failed"
+                ("failed".to_owned(), "failed")
+            }
+            None => {
+                log.partial(None);
+                let by = live.by.lock().unwrap().clone();
+                log.line(format!("deploy cancelled{}", by.map(|b| format!(" by {b}")).unwrap_or_default()));
+                log.plan(&[]);
+                log.step(Step::CleaningUp, None);
+                (self.after_cancel(&deployment, &previous, &mut log).await, "cancelled")
             }
         };
-        if let Err(err) = finish(&self.db, &deployment.id, status, &log.text()).await {
+        let steps = live.change_steps(|steps| history::finish_steps(steps, history::now_ms()));
+        stop_saving.cancel();
+        let _ = saver.await;
+        let output = log.text();
+        if let Err(err) = history::set_source(&self.db, &begun.deploy, &log.source).await {
+            tracing::error!("saving what {} deployed: {err:#}", deployment.name);
+        }
+        if let Err(err) = history::close(&self.db, &begun.deploy, history_status, &output, &steps).await {
+            tracing::error!("saving the deploy history of {}: {err:#}", deployment.name);
+        }
+        drop((log, live, in_flight));
+        if let Err(err) = finish(&self.db, &deployment.id, &status, &output).await {
             tracing::error!("saving deploy result for {}: {err}", deployment.name);
         }
     }
 
+    async fn save_source(&self, log: &Log) {
+        let Some(deploy) = log.live.as_ref().and_then(|l| l.deploy.get()) else { return };
+        if let Err(err) = history::set_source(&self.db, deploy, &log.source).await {
+            tracing::warn!("saving what this deploy deploys: {err:#}");
+        }
+    }
+
+    /// The digest Swarm pinned the service to. Its nodes pull for themselves, so the local image can't tell.
+    async fn record_stack_digest(&self, project: &str, log: &mut Log) {
+        let service = format!("{project}_{}", super::spec::SINGLE_SERVICE);
+        let Ok(inspected) = self.docker.inspect_service(&service, None::<bollard::query_parameters::InspectServiceOptions>).await else {
+            return;
+        };
+        let image = inspected.spec.and_then(|s| s.task_template).and_then(|t| t.container_spec).and_then(|c| c.image);
+        if let Some(digest) = image.as_deref().and_then(|i| i.split_once('@')).map(|(_, sha)| sha.to_owned()) {
+            log.source.digest = Some(digest);
+            self.save_source(log).await;
+        }
+    }
+
+    /// The digest the image tag pointed at when it was pulled, for the history.
+    async fn record_digest(&self, image: &str, log: &mut Log) {
+        let Ok(inspected) = self.docker.inspect_image(image).await else { return };
+        let digest = inspected.repo_digests.unwrap_or_default().into_iter().find_map(|d| d.split_once('@').map(|(_, sha)| sha.to_owned()));
+        if digest.is_some() {
+            log.source.digest = digest;
+            self.save_source(log).await;
+        }
+    }
+
+    /// Takes down what the cancelled deploy started, keeps the old version serving, and says what runs now.
+    async fn after_cancel(&self, d: &Deployment, previous: &str, log: &mut Log) -> String {
+        let site_builds = HashMap::from([("label", vec![format!("{}={}", sites::LABEL_SITE_BUILD, d.id)])]);
+        if let Ok(left) = self.docker.list_containers(Some(ListContainersOptionsBuilder::new().all(true).filters(&site_builds).build())).await {
+            for c in left.into_iter().filter_map(|c| c.id) {
+                let remove = bollard::query_parameters::RemoveContainerOptionsBuilder::new().force(true).build();
+                let _ = self.docker.remove_container(&c, Some(remove)).await;
+            }
+        }
+        let (strategy, _) = strategy(&d.spec);
+        let active = d.active_project.as_deref();
+        let started = next_project(&d.name, strategy, active);
+        match strategy {
+            Strategy::Static | Strategy::Stack => {
+                log.line(if strategy == Strategy::Static { "the files from before keep serving" } else { "Swarm finishes or rolls back an update it already started" });
+                return previous.to_owned();
+            }
+            Strategy::BlueGreen if active != Some(started.as_str()) => {
+                if let Err(err) = self.compose_down(&started, log).await {
+                    log.line(format!("warning: taking down {started}: {err:#}"));
+                }
+                if let Err(err) = self.publish_routes(d, active).await {
+                    log.line(format!("warning: restoring routes: {err:#}"));
+                }
+            }
+            _ => {}
+        }
+        let serving = active.unwrap_or(&started);
+        match self.project_containers(serving, None).await {
+            Ok(list) if !list.is_empty() => {
+                log.line(if strategy == Strategy::BlueGreen {
+                    format!("{serving} keeps serving")
+                } else {
+                    format!("{serving} has containers running. It restarts in place, so some may come from the cancelled deploy.")
+                });
+                "running".to_owned()
+            }
+            Ok(_) if previous == "created" => "created".to_owned(),
+            Ok(_) => "stopped".to_owned(),
+            Err(err) => {
+                log.line(format!("warning: checking what runs: {err:#}"));
+                previous.to_owned()
+            }
+        }
+    }
+
     async fn try_deploy(&self, d: &Deployment, revision: i64, host_mounts: bool, log: &mut Log) -> anyhow::Result<()> {
+        log.step(Step::ResolvingSecrets, None);
         let resolved = Deployment { spec: crate::saved_secrets::resolve(&self.db, &d.spec).await?, ..d.clone() };
         let d = &resolved;
+        log.hide(secret_values(&d.spec));
+        log.plan(&first_plan(d));
         let dir = self.deployment_dir(&d.id);
         tokio::fs::create_dir_all(&dir).await?;
         if d.spec.is_static() {
@@ -278,7 +744,10 @@ impl Runner {
         for warning in &warnings {
             log.line(format!("warning: {warning}"));
         }
+        let old = d.active_project.as_deref().filter(|p| *p != project);
+        log.plan(&build_plan(strategy, &project, old, &builds));
 
+        log.step(Step::CheckingPool, None);
         let pool = self.pool().await?;
         let running = counted(&self.running_usage().await?);
         let storage = self.storage_used().await?;
@@ -300,7 +769,12 @@ impl Runner {
             }
             tokio::fs::write(project_dir.join("kuroe.stack.json"), serde_json::to_vec_pretty(&config)?).await?;
             let args = ["stack", "deploy", "-c", "kuroe.stack.json", "--prune", "--detach=false", "--with-registry-auth", &project];
+            log.step(Step::Starting, Some(project.as_str()));
             self.docker_cli_with(&project_dir, &args, docker_config, log).await?;
+            if matches!(d.spec.source, Source::Image { .. }) {
+                self.record_stack_digest(&project, log).await;
+            }
+            log.step(Step::PublishingRoutes, None);
             self.publish_routes(d, Some(&project)).await?;
             self.down_other_projects(d, &project, log).await?;
             set_active_project(&self.db, &d.id, &project).await?;
@@ -309,15 +783,23 @@ impl Runner {
         }
 
         tokio::fs::write(project_dir.join("kuroe.compose.json"), serde_json::to_vec_pretty(&config)?).await?;
+        log.step(Step::Pulling, None);
+        let pull = ["pull", "--ignore-buildable", "--policy", "missing"];
+        self.compose_with(&project_dir, &project, Some("kuroe.compose.json"), &pull, docker_config, log).await?;
         let up = ["up", "-d", "--wait", "--wait-timeout", "120", "--remove-orphans"];
+        log.step(Step::Starting, Some(project.as_str()));
         let started = self.compose_with(&project_dir, &project, Some("kuroe.compose.json"), &up, docker_config, log).await;
         if started.is_ok() {
             self.apply_net_limits(&project, log).await;
+            if let Source::Image { image, .. } = &d.spec.source {
+                self.record_digest(image, log).await;
+            }
         }
 
         match strategy {
             Strategy::Recreate => {
                 started?;
+                log.step(Step::PublishingRoutes, None);
                 self.publish_routes(d, Some(&project)).await?;
                 self.down_other_projects(d, &project, log).await?;
             }
@@ -333,46 +815,58 @@ impl Runner {
         let old = d.active_project.as_deref().filter(|p| *p != project);
         let first = match started {
             Err(err) => Event::Unhealthy(format!("{err:#}")),
-            Ok(_) => self.health_check(d, project).await,
+            Ok(_) => {
+                log.step(Step::HealthCheck, Some(project));
+                self.health_check(d, project).await
+            }
         };
         let mut phase = Phase::Starting;
         let mut event = Some(first);
         let mut failure = None;
         while let Some(current) = event.take() {
+            if matches!(current, Event::Unhealthy(_) | Event::Timeout | Event::SwitchFailed(_)) {
+                log.fail_step();
+            }
             let (next_phase, steps) = bluegreen::next(phase, current).map_err(anyhow::Error::msg)?;
             phase = next_phase;
             for step in steps {
                 event = match step {
-                    Step::SwitchRoutes => {
+                    Rollout::SwitchRoutes => {
+                        log.step(Step::SwitchingTraffic, Some(project));
                         log.line(format!("switching traffic to {project}"));
                         Some(match self.publish_routes(d, Some(project)).await {
                             Ok(()) => Event::Switched,
                             Err(err) => Event::SwitchFailed(format!("{err:#}")),
                         })
                     }
-                    Step::Drain => {
+                    Rollout::Drain => {
                         let drain = proxy::load_settings(&self.db).await?.drain_seconds;
-                        if old.is_some() {
+                        if let Some(old) = old {
+                            log.step(Step::Draining, Some(old));
                             log.line(format!("draining the old version for {drain}s"));
                             tokio::time::sleep(Duration::from_secs(drain)).await;
                         }
                         Some(Event::Drained)
                     }
-                    Step::StopOld => {
+                    Rollout::StopOld => {
                         self.down_other_projects(d, project, log).await?;
                         None
                     }
-                    Step::RestoreRoutes => {
+                    Rollout::RestoreRoutes => {
+                        log.plan(&[]);
+                        log.step(Step::RestoringRoutes, old);
                         if let Err(err) = self.publish_routes(d, old).await {
                             log.line(format!("restoring routes failed: {err:#}"));
                         }
                         None
                     }
-                    Step::StopNew => {
+                    Rollout::StopNew => {
+                        log.plan(&[]);
+                        log.step(Step::StoppingNew, Some(project));
                         self.compose_down(project, log).await?;
                         Some(Event::RolledBack)
                     }
-                    Step::Report(message) => {
+                    Rollout::Report(message) => {
                         failure = Some(message);
                         event
                     }
@@ -657,7 +1151,9 @@ impl Runner {
             Source::Image { image, .. } => {
                 let login = self.registry_login(d, log).await?;
                 let dir = self.deployment_dir(&d.id);
+                log.step(Step::Pulling, Some(image.as_str()));
                 self.docker_cli_with(&dir, &["pull", image], login.as_ref().map(|l| l.path()), log).await?;
+                self.record_digest(image, log).await;
                 SiteSource::Image(image.clone())
             }
             _ => bail!("only git repositories, images and uploaded archives can be static sites"),
@@ -681,6 +1177,7 @@ impl Runner {
                 };
                 let env: Vec<String> = d.spec.container.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
                 let job = sites::CommandBuild { deployment_id: &d.id, image, command, output: &output, env: &env, source: &source };
+                log.step(Step::Building, Some("site"));
                 let files = sites.build_with_command(&job, &mut |line| log.line(line)).await?;
                 (files, sites::top_folder(if output.is_empty() { "src" } else { &output }), false)
             }
@@ -706,12 +1203,14 @@ impl Runner {
                 (files?, sites::top_folder(&output), false)
             }
         };
+        log.step(Step::InstallingFiles, None);
         sites.ensure().await?;
         let count = sites.install(&d.id, revision, files, &out, hoist).await?;
         log.line(format!("installed {count} files as revision {revision}"));
         let previous = d.active_project.as_deref().and_then(sites::revision_of);
         let project = sites::project(revision);
         set_active_project(&self.db, &d.id, &project).await?;
+        log.step(Step::PublishingRoutes, None);
         self.publish_routes(d, Some(&project)).await?;
         let keep: Vec<i64> = std::iter::once(revision).chain(previous).collect();
         if let Err(err) = sites.prune(&d.id, &keep).await {
@@ -722,14 +1221,14 @@ impl Runner {
     }
 
     pub async fn stop(&self, d: &Deployment) -> anyhow::Result<String> {
-        let mut log = Log(Vec::new());
+        let mut log = Log::default();
         self.publish_routes(d, None).await?;
         self.down_other_projects(d, "", &mut log).await?;
         Ok(log.text())
     }
 
     pub async fn restart(&self, d: &Deployment) -> anyhow::Result<String> {
-        let mut log = Log(Vec::new());
+        let mut log = Log::default();
         if d.spec.is_static() {
             self.sites().ensure().await?;
             self.publish_routes(d, d.active_project.as_deref()).await?;
@@ -750,7 +1249,7 @@ impl Runner {
     }
 
     pub async fn remove(&self, d: &Deployment) -> anyhow::Result<()> {
-        let mut log = Log(Vec::new());
+        let mut log = Log::default();
         self.down_other_projects(d, "", &mut log).await?;
         if proxy::load_settings(&self.db).await?.mode == Mode::Managed {
             self.traefik.write(&d.name, &serde_json::json!({})).await?;
@@ -770,6 +1269,7 @@ impl Runner {
     async fn down_other_projects(&self, d: &Deployment, keep: &str, log: &mut Log) -> anyhow::Result<()> {
         for project in self.labelled(&d.id, LABEL_PROJECT).await? {
             if project != keep {
+                log.step(Step::StoppingOld, Some(project.as_str()));
                 log.line(format!("stopping {project}"));
                 self.compose_down(&project, log).await?;
             }
@@ -777,6 +1277,7 @@ impl Runner {
         let root = self.data_dir.join("deployments");
         for stack in self.labelled(&d.id, LABEL_STACK).await? {
             if stack != keep {
+                log.step(Step::StoppingOld, Some(stack.as_str()));
                 log.line(format!("removing stack {stack}"));
                 self.docker_cli(&root, &["stack", "rm", "--detach=false", &stack], log).await?;
             }
@@ -826,22 +1327,10 @@ impl Runner {
         if let Some(config) = docker_config {
             command.env("DOCKER_CONFIG", config);
         }
-        let output = command
-            .args(args)
-            .current_dir(dir)
-            .stdin(Stdio::null())
-            .output()
-            .await
-            .context("running the docker CLI, is it installed?")?;
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        for text in [stdout.trim_end(), stderr.trim_end()] {
-            if !text.is_empty() {
-                log.line(text);
-            }
-        }
-        if !output.status.success() {
-            bail!("docker {} exited with {}", args.join(" "), output.status);
+        command.args(args).current_dir(dir);
+        let (status, stdout) = run(command, log, true, "docker").await?;
+        if !status.success() {
+            bail!("docker {} exited with {status}", args.join(" "));
         }
         Ok(stdout)
     }
@@ -912,23 +1401,13 @@ impl Runner {
 
     /// The resolved Compose model. `env` holds the deployment's variables and saved secrets, which fill `${VAR}` in the file.
     async fn compose_config(&self, dir: &Path, project: &str, file: &str, env: &BTreeMap<String, String>, log: &mut Log) -> anyhow::Result<Value> {
-        let output = Command::new("docker")
-            .arg("compose")
-            .args(["-p", project, "-f", file, "config", "--format", "json"])
-            .envs(env)
-            .current_dir(dir)
-            .stdin(Stdio::null())
-            .output()
-            .await
-            .context("running docker compose, is the docker CLI installed?")?;
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if !stderr.trim().is_empty() {
-            log.line(stderr.trim_end());
+        let mut command = Command::new("docker");
+        command.arg("compose").args(["-p", project, "-f", file, "config", "--format", "json"]).envs(env).current_dir(dir);
+        let (status, stdout) = run(command, log, false, "docker compose").await?;
+        if !status.success() {
+            bail!("docker compose config exited with {status}");
         }
-        if !output.status.success() {
-            bail!("docker compose config exited with {}", output.status);
-        }
-        serde_json::from_slice(&output.stdout).context("parsing docker compose config output")
+        serde_json::from_str(&stdout).context("parsing docker compose config output")
     }
 
     async fn compose_with(
@@ -948,23 +1427,10 @@ impl Runner {
         if let Some(file) = file {
             command.args(["-f", file]);
         }
-        let output = command
-            .args(args)
-            .current_dir(dir)
-            .stdin(Stdio::null())
-            .output()
-            .await
-            .context("running docker compose, is the docker CLI installed?")?;
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if args.first() != Some(&"config") && !stdout.trim().is_empty() {
-            log.line(stdout.trim_end());
-        }
-        if !stderr.trim().is_empty() {
-            log.line(stderr.trim_end());
-        }
-        if !output.status.success() {
-            bail!("docker compose {} exited with {}", args.join(" "), output.status);
+        command.args(args).current_dir(dir);
+        let (status, stdout) = run(command, log, args.first() != Some(&"config"), "docker compose").await?;
+        if !status.success() {
+            bail!("docker compose {} exited with {status}", args.join(" "));
         }
         Ok(stdout)
     }
@@ -972,6 +1438,7 @@ impl Runner {
     async fn registry_login(&self, d: &Deployment, log: &mut Log) -> anyhow::Result<Option<identity::registry::TempDockerConfig>> {
         let Source::Image { registry_identity: Some(id), .. } = &d.spec.source else { return Ok(None) };
         let saved = identity::get(&self.db, id).await?.context("the registry login for this deployment was removed")?;
+        log.hide([saved.secret.as_str()]);
         log.line(format!("pulling with the registry login {}", saved.name));
         identity::touch(&self.db, id).await?;
         Ok(Some(identity::registry::write_docker_config(&self.data_dir, &saved)?))
@@ -980,7 +1447,8 @@ impl Runner {
     async fn clone_source(&self, d: &Deployment, log: &mut Log) -> anyhow::Result<PathBuf> {
         let Source::Git { url, reference, token, identity: login, .. } = &d.spec.source else { unreachable!() };
         let src = self.deployment_dir(&d.id).join("src");
-        log.line(format!("cloning {url}"));
+        log.step(Step::Cloning, None);
+        log.line(format!("cloning {}", history::without_login(url)));
         let creds = match login {
             Some(id) => {
                 let saved = identity::get(&self.db, id).await?.context("the Git login for this deployment was removed")?;
@@ -990,12 +1458,19 @@ impl Runner {
             }
             None => token.as_deref().map(|t| (crate::git::token_login(t).0.to_owned(), t.to_owned())),
         };
+        if let Some((_, password)) = &creds {
+            log.hide([password.as_str(), crate::git::encode(password).as_str()]);
+        }
         let login = creds.as_ref().map(|(u, p)| (u.as_str(), p.as_str()));
-        crate::git::shallow_clone(url, reference.as_deref(), login, &src).await?;
+        let commit = crate::git::shallow_clone(url, reference.as_deref(), login, &src).await?;
+        log.line(format!("at commit {commit}"));
+        log.source.commit = Some(commit);
+        self.save_source(log).await;
         Ok(src)
     }
 
     async fn build(&self, build: &Build, log: &mut Log) -> anyhow::Result<()> {
+        log.step(Step::Building, Some(build.service.as_str()));
         log.line(format!("building {} as {}", build.service, build.tag));
         let labels = HashMap::from([(LABEL_MANAGED, "true")]);
         let mut options = BuildImageOptionsBuilder::new()
@@ -1016,6 +1491,7 @@ impl Runner {
 
     /// Builds an image from an uploaded archive, which Docker takes plain or compressed.
     async fn build_archive(&self, tag: &str, dockerfile: &str, archive: Vec<u8>, log: &mut Log) -> anyhow::Result<()> {
+        log.step(Step::Building, Some("site"));
         log.line(format!("building the site as {tag}"));
         let labels = HashMap::from([(LABEL_MANAGED, "true")]);
         let options = BuildImageOptionsBuilder::new().dockerfile(dockerfile).t(tag).rm(true).labels(&labels).build();
@@ -1037,13 +1513,16 @@ impl Runner {
                 for line in lines.push(&text) {
                     log.line(line);
                 }
+                log.partial(lines.pending());
             }
             if let Some(err) = info.error_detail {
                 lines.finish().into_iter().for_each(|line| log.line(line));
+                log.partial(None);
                 bail!("build of {service} failed: {}", err.message.unwrap_or_default());
             }
         }
         lines.finish().into_iter().for_each(|line| log.line(line));
+        log.partial(None);
         Ok(())
     }
 
@@ -1236,6 +1715,141 @@ mod tests {
     use super::*;
 
     const GIB: u64 = 1 << 30;
+
+    #[test]
+    fn a_deploy_can_be_cancelled_only_while_it_runs() {
+        let deploys = LiveDeploys::default();
+        assert!(!deploys.cancel("d1", "boss"), "nothing running yet");
+        let in_flight = deploys.start("d1").unwrap();
+        assert!(deploys.start("d1").is_none(), "one deploy per deployment");
+        assert!(!in_flight.live.token.is_cancelled());
+        assert!(deploys.cancel("d1", "boss"));
+        assert!(in_flight.live.token.is_cancelled());
+        assert_eq!(in_flight.live.by.lock().unwrap().as_deref(), Some("boss"));
+        assert!(!deploys.cancel("d2", "boss"), "only that deployment");
+        drop(in_flight);
+        assert!(!deploys.cancel("d1", "boss"), "the entry goes when the deploy is done");
+        assert!(deploys.start("d1").is_some(), "and the next deploy can take it");
+    }
+
+    #[tokio::test]
+    async fn a_live_deploy_can_be_followed_from_any_point() {
+        let deploys = LiveDeploys::default();
+        let in_flight = deploys.start("d1").unwrap();
+        in_flight.live.deploy.set("deploy-1".into()).unwrap();
+        let mut log = Log::live(in_flight.live.clone(), DeploySource::default());
+        log.step(Step::ResolvingSecrets, None);
+        log.plan(&[(Step::Cloning, None), (Step::Building, Some("web".into()))]);
+        log.step(Step::Cloning, None);
+        log.line("cloning");
+        log.partial(Some("fetch 40%".into()));
+
+        let (snapshot, mut rx) = deploys.follow("d1").unwrap();
+        let LiveMessage::Snapshot { deploy, lines, partial, steps } = snapshot else { panic!("{snapshot:?}") };
+        assert_eq!((deploy.as_deref(), lines, partial.as_deref()), (Some("deploy-1"), vec!["cloning".to_owned()], Some("fetch 40%")));
+        let started: Vec<(Step, bool)> = steps.iter().map(|s| (s.step, s.started_ms.is_some())).collect();
+        assert_eq!(started, [(Step::ResolvingSecrets, true), (Step::Cloning, true), (Step::Building, false)], "the build is still to come");
+
+        log.partial(Some("fetch 40%".into()));
+        log.step(Step::Building, Some("web"));
+        log.line("Step 1/3");
+        let LiveMessage::Steps { steps } = rx.recv().await.unwrap() else { panic!("an unchanged partial line is not sent again") };
+        assert!(steps[1].finished_ms.is_some(), "a new step ends the one before");
+        assert!(steps[2].started_ms.is_some() && steps[2].detail.as_deref() == Some("web"));
+        assert_eq!(rx.recv().await.unwrap(), LiveMessage::Line { text: "Step 1/3".into() });
+        assert_eq!(deploys.current_step("d1").map(|s| s.step), Some(Step::Building));
+        assert_eq!(in_flight.live.unsaved().map(|(text, _)| text).as_deref(), Some("cloning\nStep 1/3"));
+        assert!(in_flight.live.unsaved().is_none(), "nothing new since the last save");
+
+        drop((log, in_flight));
+        assert!(rx.recv().await.is_err(), "the stream ends with the deploy");
+        assert!(deploys.follow("d1").is_none());
+    }
+
+    #[test]
+    fn deploy_output_masks_secret_values() {
+        let mut spec = Spec::new(Source::Git {
+            url: "https://example.com/r.git".into(),
+            reference: None,
+            context: None,
+            dockerfile: None,
+            token: Some("ghp_token123".into()),
+            identity: None,
+            compose_file: None,
+        });
+        spec.container.env = BTreeMap::from([
+            ("DB_PASSWORD".into(), "hunter22".into()),
+            ("API_KEY".into(), "from-saved".into()),
+            ("PIN".into(), "123".into()),
+            ("LOG".into(), "info".into()),
+        ]);
+        spec.secrets = BTreeSet::from(["DB_PASSWORD".into(), "PIN".into()]);
+        spec.secret_refs = BTreeMap::from([("API_KEY".into(), "saved-1".into())]);
+        let mut log = Log::default();
+        log.hide(secret_values(&spec));
+        log.line("connecting with hunter22 and from-saved, token ghp_token123, log info, pin 123");
+        assert_eq!(log.text(), "connecting with ******** and ********, token ********, log info, pin ********", "short secrets too");
+    }
+
+    #[test]
+    fn the_line_in_progress_shows_its_latest_redraw() {
+        let mut lines = Lines::default();
+        assert_eq!(lines.push_bytes(b"done\nfetch 10%\rfetch 55%"), ["done"]);
+        assert_eq!(lines.pending().as_deref(), Some("fetch 55%"));
+        let split = "größe".as_bytes();
+        let mut lines = Lines::default();
+        lines.push_bytes(&split[..3]);
+        assert_eq!(lines.pending().as_deref(), Some("gr"), "half a character waits for the rest");
+        assert_eq!(Lines::default().pending(), None);
+    }
+
+    fn named(plan: &[Planned]) -> Vec<Step> {
+        plan.iter().map(|(step, _)| *step).collect()
+    }
+
+    #[test]
+    fn plans_follow_the_strategy() {
+        let blue_green = rollout_plan(Strategy::BlueGreen, "shop-green", Some("shop-blue"));
+        assert_eq!(
+            named(&blue_green),
+            [Step::Pulling, Step::Starting, Step::HealthCheck, Step::SwitchingTraffic, Step::Draining, Step::StoppingOld]
+        );
+        assert_eq!(named(&rollout_plan(Strategy::BlueGreen, "shop-blue", None)), [Step::Pulling, Step::Starting, Step::HealthCheck, Step::SwitchingTraffic]);
+        assert_eq!(named(&rollout_plan(Strategy::Recreate, "shop", None)), [Step::Pulling, Step::Starting, Step::PublishingRoutes]);
+        assert_eq!(named(&rollout_plan(Strategy::Stack, "shop", None)), [Step::Starting, Step::PublishingRoutes], "Swarm nodes pull for themselves");
+
+        let mut d = Deployment {
+            id: "d1".into(),
+            name: "shop".into(),
+            spec: git(None, RunMode::Compose),
+            status: "running".into(),
+            revision: 1,
+            last_output: String::new(),
+            active_project: None,
+            created_by: None,
+            created_at: 0,
+            updated_at: 0,
+        };
+        assert_eq!(named(&first_plan(&d))[..2], [Step::Cloning, Step::CheckingPool]);
+        d.spec = Spec::new(Source::image("nginx"));
+        d.spec.site = Some(Default::default());
+        assert_eq!(named(&first_plan(&d)), [Step::Pulling, Step::InstallingFiles, Step::PublishingRoutes]);
+
+        let build = Build { service: "web".into(), context: ".".into(), dockerfile: "Dockerfile".into(), args: Default::default(), tag: "t".into() };
+        let plan = build_plan(Strategy::Recreate, "shop", None, &[build]);
+        assert_eq!(plan[1], (Step::Building, Some("web".to_owned())));
+    }
+
+    #[test]
+    fn process_output_keeps_characters_split_between_reads() {
+        let mut lines = Lines::default();
+        let text = "größe\nzwei";
+        let bytes = text.as_bytes();
+        let mut out = lines.push_bytes(&bytes[..3]);
+        out.extend(lines.push_bytes(&bytes[3..]));
+        out.extend(lines.finish());
+        assert_eq!(out, ["größe", "zwei"]);
+    }
 
     #[test]
     fn build_stream_becomes_whole_lines_with_their_colors() {

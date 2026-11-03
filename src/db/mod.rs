@@ -88,7 +88,7 @@ mod tests {
             .unwrap()
     }
 
-    const TABLES_ADDED: [&[&str]; 2] = [
+    const TABLES_ADDED: [&[&str]; 3] = [
         &[
         "api_tokens",
         "container_metrics",
@@ -110,6 +110,7 @@ mod tests {
         "volumes",
         ],
         &["volume_limits", "volume_sizes"],
+        &["deploys"],
     ];
 
     fn tables_at(version: usize) -> Vec<String> {

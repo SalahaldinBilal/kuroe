@@ -234,6 +234,69 @@ async fn call_tool(app: &Router, token: &str, name: &str, arguments: Value) -> (
 }
 
 #[tokio::test]
+async fn cancelling_needs_the_deploy_permission_and_a_running_deploy() {
+    use crate::deploy::{self, Source, Spec};
+    let (app, state) = app().await;
+    let owner = auth::create_user(&state.db, "boss", "boss-password-1", Role::owner()).await.unwrap();
+    let boss = auth::create_session(&state.db, &owner.id).await.unwrap();
+    let viewer = auth::create_user(&state.db, "look", "look-password-1", Role::viewer()).await.unwrap();
+    let look = auth::create_session(&state.db, &viewer.id).await.unwrap();
+    let d = deploy::create(&state.db, "shop", &Spec::new(Source::image("nginx:1.29")), &owner).await.unwrap();
+    let uri = format!("/api/v1/deployments/{}/deploy/cancel", d.id);
+
+    let (status, _, _) = send(&app, request(Method::POST, &uri, Some(&look), None)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _, body) = send(&app, request(Method::POST, &uri, Some(&boss), None)).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"], "no deploy is running");
+}
+
+#[tokio::test]
+async fn deploy_history_pages_and_stays_inside_its_deployment() {
+    use crate::deploy::history::{self, DeploySource, Started};
+    use crate::deploy::{self, Source, Spec};
+    let (app, state) = app().await;
+    sqlx::query("INSERT INTO roles (name, permissions, scope) VALUES ('elsewhere', '[\"dep.view\"]', '[\"another-deployment\"]')")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let owner = auth::create_user(&state.db, "boss", "boss-password-1", Role::owner()).await.unwrap();
+    let boss = auth::create_session(&state.db, &owner.id).await.unwrap();
+    let outsider = auth::create_user(&state.db, "out", "out-password-1", Role("elsewhere".into())).await.unwrap();
+    let out = auth::create_session(&state.db, &outsider.id).await.unwrap();
+    let shop = deploy::create(&state.db, "shop", &Spec::new(Source::image("nginx:1.29")), &owner).await.unwrap();
+    let blog = deploy::create(&state.db, "blog", &Spec::new(Source::image("nginx:1.29")), &owner).await.unwrap();
+    let mut ids = Vec::new();
+    for _ in 0..3 {
+        let begun = deploy::begin_deploy(&state.db, &shop.id, &Started::user(&owner), &DeploySource::of(&shop.spec))
+            .await
+            .unwrap()
+            .unwrap();
+        history::close(&state.db, &begun.deploy, "running", "pulled nginx", &[]).await.unwrap();
+        deploy::finish(&state.db, &shop.id, "running", "pulled nginx").await.unwrap();
+        ids.push(begun.deploy);
+    }
+
+    let page = format!("/api/v1/deployments/{}/deploys?limit=2", shop.id);
+    let (status, _, body) = send(&app, request(Method::GET, &page, Some(&boss), None)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let revisions: Vec<i64> = body["deploys"].as_array().unwrap().iter().map(|d| d["revision"].as_i64().unwrap()).collect();
+    assert_eq!((revisions, body["more"].as_bool()), (vec![3, 2], Some(true)));
+    assert!(body["deploys"][0].get("output").is_none(), "the list leaves output out");
+    assert_eq!(body["deploys"][0]["source"]["image"], "nginx:1.29");
+    assert_eq!(body["deploys"][0]["trigger"], "ui");
+
+    let one = format!("/api/v1/deployments/{}/deploys/{}", shop.id, ids[0]);
+    let (status, _, body) = send(&app, request(Method::GET, &one, Some(&boss), None)).await;
+    assert_eq!((status, body["output"].as_str()), (StatusCode::OK, Some("pulled nginx")));
+    let wrong = format!("/api/v1/deployments/{}/deploys/{}", blog.id, ids[0]);
+    let (status, _, _) = send(&app, request(Method::GET, &wrong, Some(&boss), None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "a deploy only shows under its own deployment");
+    let (status, _, _) = send(&app, request(Method::GET, &one, Some(&out), None)).await;
+    assert_ne!(status, StatusCode::OK, "a list-scoped role outside the deployment sees nothing");
+}
+
+#[tokio::test]
 async fn volume_limits_show_who_is_over_and_need_the_permission() {
     use crate::deploy::{self, Source, Spec};
     use crate::docker::rewrite::{ServiceSettings, SharedMount};
@@ -368,7 +431,7 @@ async fn mcp_reads_as_the_token_user_and_tokens_work_nowhere_else() {
     assert_eq!(body["result"]["protocolVersion"], "2025-06-18");
     assert_eq!(body["result"]["serverInfo"]["name"], "kuroe");
     let (_, body) = mcp(&app, &token, "tools/list", json!({})).await;
-    assert_eq!(body["result"]["tools"].as_array().unwrap().len(), 7);
+    assert_eq!(body["result"]["tools"].as_array().unwrap().len(), 8);
     let (_, body) = mcp(&app, &token, "deployments/delete", json!({})).await;
     assert_eq!(body["error"]["code"], -32601);
     let note = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
@@ -391,6 +454,8 @@ async fn mcp_reads_as_the_token_user_and_tokens_work_nowhere_else() {
     assert!(!error && text.contains("api.example.com"), "{text}");
     let (error, text) = call_tool(&app, &token, "last_deploy", json!({ "deployment": "api" })).await;
     assert!(!error && text.contains("\"status\""), "{text}");
+    let (error, text) = call_tool(&app, &token, "deploy_history", json!({ "deployment": "api" })).await;
+    assert!(!error && text.contains("\"deploys\": []"), "{text}");
     let window = json!({ "deployment": "api", "from": "2026-11-01T22:15:00Z", "to": "2026-11-02T01:40:00Z" });
     let (error, text) = call_tool(&app, &token, "deployment_metrics", window).await;
     assert!(!error && text.contains("2026-11-01T22:15:00Z"), "{text}");

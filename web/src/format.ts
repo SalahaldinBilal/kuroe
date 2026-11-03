@@ -26,6 +26,14 @@ export function formatDate(seconds: number): string {
   return new Date(seconds * 1000).toISOString().slice(0, 10);
 }
 
+export function formatDuration(seconds: number): string {
+  const s = Math.max(0, seconds);
+  if (s < 10) return `${s.toFixed(1)}s`;
+  if (s < 60) return `${Math.floor(s)}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
 export function formatAgo(seconds: number, now = Date.now() / 1000): string {
   const diff = Math.max(0, now - seconds);
   if (diff < 45) return "just now";

@@ -16,6 +16,13 @@
 - New deployment lists the repositories a saved GitHub token, GitLab token or Gitea/Forgejo token can read, as it already did for a GitHub App. Type to filter the list, or pick "Another repository" to type a URL.
 - Volumes show their size, measured every 10 minutes, on the Volumes page and on the deployments that use them. A deployment's own Compose volumes are listed too.
 - A volume can have a size limit. Docker can't cap a volume, so kuroe compares the measured size with it, marks a volume that's over, and can stop the deployments that use it until there's room again.
+- A running deploy can be cancelled. kuroe stops the build or start where it is and takes down the half-started version. With blue/green deploys the version from before keeps serving, and the output says who cancelled it.
+- Deploy output shows live while the deploy runs, line by line as Docker prints it, with progress bars updating in place. Next to it are the deploy's steps: done ones with how long they took, the current one, and the ones still to come. A failed deploy marks the step that failed.
+- The Deployments list shows the step a running deploy is in.
+- Images are pulled in their own step before the containers start, so a slow pull no longer looks like a slow start. Images already on the server aren't pulled again, as before.
+- A deployment's new Deploys tab lists its deploys: revision, result, who or what started it, the commit or image digest it deployed, when, and how long it took. The commit links to GitHub, GitLab or Gitea. Each deploy opens with its steps and full output. The last 50 are kept per deployment, which can be changed under Settings, Retention.
+- Secret values, saved secrets, Git tokens and registry passwords are masked in deploy output, and Git errors no longer quote the clone URL with its password.
+- A deploy that was running when kuroe stopped is marked failed on the next start, instead of leaving the deployment stuck as deploying.
 
 ## [0.1.1] - 2026-11-02
 

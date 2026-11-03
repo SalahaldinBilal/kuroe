@@ -4,6 +4,7 @@ mod bundle;
 mod ci;
 mod containers;
 mod deployments;
+mod deploys;
 mod error;
 mod events;
 mod extract;
@@ -82,7 +83,7 @@ impl AppState {
         let docker = crate::docker::connect()?;
         let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build()?;
         let traefik = Traefik { docker: docker.clone(), http: http.clone() };
-        let runner = Runner { db: db.clone(), docker: docker.clone(), data_dir, traefik };
+        let runner = Runner { db: db.clone(), docker: docker.clone(), data_dir, traefik, live: Default::default() };
         let runners = crate::runners::Runners {
             db: db.clone(),
             docker: docker.clone(),
@@ -141,6 +142,10 @@ pub fn router(state: AppState) -> Router {
         .route("/deployments", get(deployments::list).post(deployments::create))
         .route("/deployments/{id}", get(deployments::detail).put(deployments::update).delete(deployments::remove))
         .route("/deployments/{id}/deploy", post(ci::deploy))
+        .route("/deployments/{id}/deploy/cancel", post(deployments::cancel_deploy))
+        .route("/deployments/{id}/deploy/ws", get(deploys::live))
+        .route("/deployments/{id}/deploys", get(deploys::list))
+        .route("/deployments/{id}/deploys/{deploy}", get(deploys::detail))
         .route("/deployments/{id}/tokens", get(ci::list_tokens).post(ci::create_token))
         .route("/deployments/{id}/tokens/{token}", axum::routing::delete(ci::delete_token))
         .route("/deployments/{id}/ci-config", get(pipelines::config))

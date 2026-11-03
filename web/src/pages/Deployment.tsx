@@ -5,7 +5,9 @@ import { api, type ContainerRow, can, type DeploymentDetail, type Permission, so
 import { AccessPanel } from "../components/AccessPanel";
 import { AnsiText } from "../components/AnsiText";
 import { CiPanel } from "../components/CiPanel";
+import { DeployHistory } from "../components/DeployHistory";
 import { DeploymentMetrics } from "../components/DeploymentMetrics";
+import { LiveDeploy } from "../components/DeployRun";
 import { Domains } from "../components/Domains";
 import { type FileCache, Files } from "../components/Files";
 import { LogHistory } from "../components/LogHistory";
@@ -20,7 +22,6 @@ import { Icon } from "../components/ui/Icon";
 import Input from "../components/ui/Input/Input";
 import Modal from "../components/ui/Modal/Modal";
 import { ready } from "../components/ui/Overlay";
-import ProgressBar from "../components/ui/ProgressBar/ProgressBar";
 import SegmentedControl from "../components/ui/SegmentedControl/SegmentedControl";
 import { Bone, Busy, SkeletonCardHead } from "../components/ui/Skeleton";
 import Tabs from "../components/ui/Tabs/Tabs";
@@ -35,7 +36,7 @@ import { KIND_ICON } from "./Deployments";
 import { ServiceSettingsForm } from "./ServiceSettings";
 
 type PanelKind = "logs" | "shell" | "attach" | "files";
-type Tab = "overview" | "metrics" | "logs" | "domains" | "ci" | "access" | "settings";
+type Tab = "overview" | "deploys" | "metrics" | "logs" | "domains" | "ci" | "access" | "settings";
 
 interface Panel {
   container: ContainerRow;
@@ -50,13 +51,11 @@ const PANEL_OPTIONS: { value: PanelKind; label: string }[] = [
   { value: "files", label: "Files" },
 ];
 
-const OUTPUT_TAIL = 14;
-
 const has = (d: DeploymentDetail, permission: Permission) => d.permissions.includes(permission);
 
 export function Deployment() {
   const params = useParams<{ id: string }>();
-  const [search, setSearch] = useSearchParams<{ tab?: string }>();
+  const [search, setSearch] = useSearchParams<{ tab?: string; deploy?: string }>();
   const navigate = useNavigate();
   const user = useUser();
   const canManageAccess = () => can(user(), "users");
@@ -145,6 +144,7 @@ export function Deployment() {
   const tabs = (d: DeploymentDetail) =>
     [
       { value: "overview", label: "Overview" },
+      { value: "deploys", label: "Deploys" },
       { value: "metrics", label: "Metrics" },
       { value: "logs", label: "Logs" },
       { value: "domains", label: "Domains" },
@@ -253,7 +253,9 @@ export function Deployment() {
           <Tabs
             tabs={tabs(d())}
             value={tab()}
-            onChange={(value) => setSearch({ tab: value === "overview" ? undefined : value }, { replace: true })}
+            onChange={(value) =>
+              setSearch({ tab: value === "overview" ? undefined : value, deploy: undefined }, { replace: true })
+            }
           />
 
           <Switch>
@@ -264,6 +266,15 @@ export function Deployment() {
                 busy={busy()}
                 onOpen={openPanel}
                 onDeploy={() => act(() => api.deploy(d().id), `Deploying ${d().name}`)}
+                onRefresh={refetch}
+                onOpenDeploy={(deploy) => setSearch({ tab: "deploys", deploy })}
+              />
+            </Match>
+            <Match when={tab() === "deploys"}>
+              <DeployHistory
+                detail={d()}
+                open={search.deploy}
+                onOpen={(deploy) => setSearch({ deploy }, { replace: true })}
               />
             </Match>
             <Match when={tab() === "metrics"}>
@@ -344,6 +355,7 @@ export function Deployment() {
 
 const SKELETON_TABS: { value: Tab; label: string; disabled: boolean }[] = [
   { value: "overview", label: "Overview", disabled: true },
+  { value: "deploys", label: "Deploys", disabled: true },
   { value: "metrics", label: "Metrics", disabled: true },
   { value: "logs", label: "Logs", disabled: true },
   { value: "domains", label: "Domains", disabled: true },
@@ -397,6 +409,8 @@ interface OverviewProps {
   busy: boolean;
   onOpen: (container: ContainerRow, kind: PanelKind) => void;
   onDeploy: () => void;
+  onRefresh: () => void;
+  onOpenDeploy: (deploy: string) => void;
 }
 
 function Overview(props: OverviewProps) {
@@ -404,7 +418,21 @@ function Overview(props: OverviewProps) {
   const stopped = () => d().containers.filter((c) => c.state !== "running");
   const [volumes] = createResource(() => d().id, api.volumesOf);
   const over = () => (ready(volumes) ?? []).filter((v) => v.over);
-  const tail = () => d().last_output.trimEnd().split("\n").slice(-OUTPUT_TAIL).join("\n");
+  const { pushError } = useToastState;
+  const [confirmCancel, setConfirmCancel] = createSignal(false);
+  const [cancelling, setCancelling] = createSignal<number | null>(null);
+  const isCancelling = () => cancelling() === d().revision && d().status === "deploying";
+
+  async function cancelDeploy() {
+    setConfirmCancel(false);
+    setCancelling(d().revision);
+    try {
+      await api.cancelDeploy(d().id);
+    } catch (err) {
+      setCancelling(null);
+      pushError(err);
+    }
+  }
   let output: HTMLDetailsElement | undefined;
 
   function showOutput() {
@@ -426,15 +454,18 @@ function Overview(props: OverviewProps) {
           <Card>
             <div class="card-b stack" style={{ gap: "12px" }}>
               <div class="hrow">
-                <b style={{ color: "var(--ink)", "font-weight": "500" }}>Deploying</b>
-                <span class="muted">{sourceLabel(d().spec)}</span>
+                <b style={{ color: "var(--ink)", "font-weight": "500" }}>
+                  {isCancelling() ? "Cancelling" : "Deploying"}
+                </b>
+                <span class="muted grow">{sourceLabel(d().spec)}</span>
+                <Show when={has(d(), "dep.deploy")}>
+                  <Button size="sm" disabled={isCancelling()} onClick={() => setConfirmCancel(true)}>
+                    <Icon name="x" />
+                    {isCancelling() ? "Cancelling" : "Cancel deploy"}
+                  </Button>
+                </Show>
               </div>
-              <ProgressBar />
-              <Show when={tail()}>
-                <pre class="term" style={{ "max-height": "220px", "border-radius": "6px" }}>
-                  <AnsiText text={tail()} />
-                </pre>
-              </Show>
+              <LiveDeploy deployment={d().id} onEnd={props.onRefresh} />
             </div>
           </Card>
         </Match>
@@ -466,6 +497,27 @@ function Overview(props: OverviewProps) {
           </Note>
         </Match>
       </Switch>
+
+      <Modal
+        show={confirmCancel()}
+        title="Cancel this deploy?"
+        onHide={() => setConfirmCancel(false)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirmCancel(false)}>
+              Keep deploying
+            </Button>
+            <Button variant="danger-solid" onClick={cancelDeploy}>
+              Cancel deploy
+            </Button>
+          </>
+        }
+      >
+        <p>
+          kuroe stops the build or start where it is and takes down the half-started version. With blue/green, the
+          version from before keeps serving. A deployment that restarts in place may already be down.
+        </p>
+      </Modal>
 
       <For each={over()}>
         {(v) => (
@@ -596,6 +648,20 @@ function Overview(props: OverviewProps) {
             <Icon name="terminal" />
             <b>Last deploy output</b>
             <span class="muted">revision {d().revision}</span>
+            <Show when={d().last_deploy}>
+              {(deploy) => (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    props.onOpenDeploy(deploy());
+                  }}
+                >
+                  Open deploy
+                </Button>
+              )}
+            </Show>
             <Icon name="down" class="chev" />
           </summary>
           <pre class="term">

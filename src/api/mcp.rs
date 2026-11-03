@@ -23,10 +23,11 @@ const SECRET_MASK: &str = "********";
 const PROTOCOL_VERSIONS: [&str; 4] = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 const LOG_TAIL_BYTES: u64 = 512 * 1024;
 const MAX_LOG_LINES: u64 = 500;
+const MAX_DEPLOYS: i64 = 100;
 const HOUR_SECS: i64 = 3_600;
 
 const INSTRUCTIONS: &str = "kuroe deploys containers on a Docker host. These tools only read: deployments, their \
-    last deploy, logs, metrics, the server's resources and the proxy routes. Nothing here can deploy, stop or change \
+    deploys, logs, metrics, the server's resources and the proxy routes. Nothing here can deploy, stop or change \
     anything. Deployments can be named by name or id.";
 
 pub async fn post(State(state): State<AppState>, headers: HeaderMap, Json(message): Json<Value>) -> Response {
@@ -125,6 +126,16 @@ pub fn tools() -> Vec<Value> {
             &["deployment"],
         ),
         tool(
+            "deploy_history",
+            "Deploy history",
+            "The deployment's recent deploys, newest first: revision, status, what started it and who, what was deployed (commit or image digest), and when. Without output.",
+            json!({
+                "deployment": deployment,
+                "limit": { "type": "integer", "minimum": 1, "maximum": MAX_DEPLOYS, "description": "How many, 20 when left out" },
+            }),
+            &["deployment"],
+        ),
+        tool(
             "deployment_logs",
             "Deployment logs",
             "Recent log lines of a deployment's containers, per service. Needs permission to see the deployment's secrets, because apps print secrets into logs.",
@@ -169,6 +180,7 @@ async fn call(state: &AppState, current: &CurrentUser, name: &str, args: &Value)
         "list_deployments" => list_deployments(state, current).await,
         "get_deployment" => get_deployment(state, current, args).await,
         "last_deploy" => last_deploy(state, current, args).await,
+        "deploy_history" => deploy_history(state, current, args).await,
         "deployment_logs" => deployment_logs(state, current, args).await,
         "deployment_metrics" => deployment_metrics(state, current, args).await,
         "server_overview" => server_overview(state, current).await,
@@ -217,7 +229,7 @@ fn source_kind(d: &Value) -> Value {
 async fn list_deployments(state: &AppState, current: &CurrentUser) -> ToolResult {
     let Json(list) = super::deployments::list(State(state.clone()), as_user(current)).await.map_err(api)?;
     let mut out = Vec::new();
-    for d in list {
+    for d in list.into_iter().map(|row| row.deployment) {
         let domains: Vec<String> =
             crate::proxy::domains_for(&state.db, &d.id).await.map_err(internal)?.into_iter().map(|dm| dm.hostname).collect();
         let value = serde_json::to_value(&d).map_err(internal)?;
@@ -273,6 +285,13 @@ async fn last_deploy(state: &AppState, current: &CurrentUser, args: &Value) -> T
         "finished_at": value["updated_at"],
         "output": value["last_output"],
     }))
+}
+
+async fn deploy_history(state: &AppState, current: &CurrentUser, args: &Value) -> ToolResult {
+    let d = resolve(state, current, args).await?;
+    let limit = args["limit"].as_i64().unwrap_or(20).clamp(1, MAX_DEPLOYS);
+    let deploys = deploy::history::list(&state.db, &d.id, 0, limit).await.map_err(internal)?;
+    Ok(json!({ "name": d.name, "deploys": deploys }))
 }
 
 fn valid_date(date: &str) -> bool {
@@ -471,7 +490,7 @@ mod tests {
     #[test]
     fn every_tool_is_marked_read_only() {
         let tools = tools();
-        assert_eq!(tools.len(), 7);
+        assert_eq!(tools.len(), 8);
         for tool in &tools {
             assert_eq!(tool["annotations"]["readOnlyHint"], true, "{}", tool["name"]);
             assert_eq!(tool["inputSchema"]["type"], "object");
