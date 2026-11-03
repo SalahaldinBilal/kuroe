@@ -266,7 +266,12 @@ export function Deployment() {
               />
             </Match>
             <Match when={tab() === "metrics"}>
-              <DeploymentMetrics deployment={d().id} services={d().spec.services} stack={d().spec.mode === "stack"} />
+              <DeploymentMetrics
+                deployment={d().id}
+                services={d().spec.services}
+                stack={d().spec.mode === "stack"}
+                containers={d().containers}
+              />
             </Match>
             <Match when={tab() === "logs"}>
               <LogHistory deployment={d().id} />

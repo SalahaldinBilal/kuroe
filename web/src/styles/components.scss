@@ -1128,6 +1128,12 @@ details.out {
   font-weight: 500;
 }
 
+.cc-limit {
+  margin-left: 8px;
+  color: var(--faint);
+  font: 400 11px var(--font-mono);
+}
+
 .chart-empty {
   display: grid;
   place-items: center;
@@ -1203,6 +1209,30 @@ details.out {
   fill: var(--ink);
   stroke: var(--surface);
   stroke-width: 2;
+}
+
+.cc-legend {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr));
+  gap: 2px 16px;
+  margin: 6px 0 4px;
+  padding: 0 2px;
+  list-style: none;
+  font-size: 12px;
+
+  li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    min-height: 22px;
+
+    .grow {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
 }
 
 .stackbar {

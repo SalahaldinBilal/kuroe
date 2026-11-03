@@ -234,6 +234,52 @@ async fn call_tool(app: &Router, token: &str, name: &str, arguments: Value) -> (
 }
 
 #[tokio::test]
+async fn metrics_by_deployment_only_show_what_the_user_can_see() {
+    use crate::deploy::{self, Source, Spec};
+    let (app, state) = app().await;
+    let owner = auth::create_user(&state.db, "boss", "boss-password-1", Role::owner()).await.unwrap();
+    let api = deploy::create(&state.db, "api", &Spec::new(Source::image("nginx:1.29")), &owner).await.unwrap();
+    let hidden = deploy::create(&state.db, "hidden", &Spec::new(Source::image("nginx:1.29")), &owner).await.unwrap();
+    let now = crate::db::now();
+    for (i, (deployment, container)) in [(&api.id, "c1"), (&api.id, "c2"), (&hidden.id, "c3")].into_iter().enumerate() {
+        sqlx::query("INSERT INTO metric_series (id, deployment_id, service, container_id) VALUES (?, ?, 'app', ?)")
+            .bind(i as i64 + 1)
+            .bind(deployment)
+            .bind(container)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO container_metrics VALUES (?, ?, 25.0, 1000, 0, 0, 0, 0, 0)")
+            .bind(i as i64 + 1)
+            .bind(now - 30)
+            .execute(&state.db)
+            .await
+            .unwrap();
+    }
+    sqlx::query("INSERT INTO roles (name, builtin, description, permissions, scope) VALUES ('looker', 0, '', '[\"dep.view\"]', ?)")
+        .bind(format!("[\"{}\"]", api.id))
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let looker = auth::create_user(&state.db, "looker", "looker-password-1", Role("looker".into())).await.unwrap();
+    let session = auth::create_session(&state.db, &looker.id).await.unwrap();
+
+    let uri = format!("/api/v1/metrics/deployments?from={}&to={}", now - 3600, now);
+    let (status, _, body) = send(&app, request(Method::GET, &uri, Some(&session), None)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let list = body["deployments"].as_array().unwrap();
+    assert_eq!(list.len(), 1, "only deployments the user can see: {body}");
+    assert_eq!(list[0]["name"], "api");
+    assert_eq!(list[0]["points"][0]["cpu"], 50.0, "its two containers are summed");
+
+    let uri = format!("/api/v1/deployments/{}/metrics?from={}&to={}", api.id, now - 3600, now);
+    let (_, _, body) = send(&app, request(Method::GET, &uri, Some(&session), None)).await;
+    let containers: Vec<&str> = body["containers"].as_array().unwrap().iter().map(|c| c["container_id"].as_str().unwrap()).collect();
+    assert_eq!(containers, ["c1", "c2"]);
+    assert_eq!(body["services"]["app"][0]["cpu"], 50.0);
+}
+
+#[tokio::test]
 async fn mcp_reads_as_the_token_user_and_tokens_work_nowhere_else() {
     use std::collections::{BTreeMap, BTreeSet};
 

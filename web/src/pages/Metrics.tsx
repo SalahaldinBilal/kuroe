@@ -1,7 +1,7 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { useUser } from "../App";
-import { api, can, type HostPoint, type NetworkPoint } from "../api";
-import { gapFor, LineChart } from "../components/LineChart";
+import { api, can, type HostPoint, type NetworkPoint, type ServicePoint } from "../api";
+import { gapFor, LineChart, type Series, topSeries } from "../components/LineChart";
 import { isLive, type Range, RangePicker, rangeDomain, windowOf } from "../components/RangePicker";
 import { Card, Note, PageHeader } from "../components/ui/Blocks";
 import Button from "../components/ui/Button/Button";
@@ -34,7 +34,23 @@ export function Metrics() {
   const [range, setRange] = createSignal<Range>({ preset: "24h" });
   const [host, { refetch: reloadHost }] = createResource(range, (r) => api.hostMetrics(windowOf(r)));
   const [storage, { mutate, refetch: reloadStorage }] = createResource(api.storage);
+  const [byDeployment, { refetch: reloadDeployments }] = createResource(range, (r) =>
+    api.metricsByDeployment(windowOf(r)),
+  );
   const quiet = useLive(() => isLive(range()) && reloadHost(), HOST_SAMPLE_SECONDS);
+  useLive(() => isLive(range()) && reloadDeployments(), CONTAINER_SAMPLE_SECONDS);
+  const perDeployment = (pick: (p: ServicePoint) => number): Series[] =>
+    topSeries(
+      (byDeployment.latest?.deployments ?? []).map((d) => ({
+        label: d.name,
+        points: d.points.map((p) => ({ t: p.t, v: pick(p) })),
+      })),
+    );
+  const deploymentAxis = () => ({
+    gap: gapFor(byDeployment.latest?.bucket ?? 0, CONTAINER_SAMPLE_SECONDS),
+    domain: rangeDomain(range()),
+    loading: !byDeployment.latest && !byDeployment.error,
+  });
   useLive(reloadStorage, 60);
   const [info] = createResource(api.dockerInfo);
   const cores = () => ready(info)?.cpus;
@@ -72,7 +88,7 @@ export function Metrics() {
     <div class="content">
       <PageHeader
         title="Metrics"
-        description="This host and its disk"
+        description="This host, its disk and its deployments"
         actions={<RangePicker value={range()} onChange={setRange} />}
       />
       <div class="stack" style={{ gap: "24px" }}>
@@ -80,11 +96,12 @@ export function Metrics() {
           <Note tone="bad">{String(host.error?.message ?? host.error)}</Note>
         </Show>
         <div class="charts wide" classList={{ refetching: host.loading && !quiet() }}>
-          <LineChart {...axis()} title="CPU" points={series((p) => p.cpu)} format={formatPercent} max={100} />
+          <LineChart {...axis()} title="CPU" points={series((p) => p.cpu)} format={formatPercent} />
           <LineChart
             {...axis()}
             title="Memory"
             points={series((p) => p.mem)}
+            binary
             format={formatBytes}
             limit={lastPoint() ? { value: lastPoint()?.mem_total ?? 0, label: "total" } : undefined}
           />
@@ -92,6 +109,7 @@ export function Metrics() {
             {...axis()}
             title="Disk used, data dir"
             points={series((p) => p.disk)}
+            binary
             format={formatBytes}
             limit={lastPoint() ? { value: lastPoint()?.disk_total ?? 0, label: "size" } : undefined}
           />
@@ -101,6 +119,7 @@ export function Metrics() {
             hint="Processes running or waiting for a CPU, averaged over a minute. Below the line, cores are free. Above it, work waits for a CPU. High demand with low CPU usually means a slow disk."
             points={series((p) => p.load1)}
             format={(v) => (cores() ? `${v.toFixed(2)} of ${cores()} cores` : v.toFixed(2))}
+            tick={(v) => v.toFixed(v % 1 ? 1 : 0)}
             limit={cores() ? { value: cores() ?? 0, label: "cores", text: "all cores busy" } : undefined}
           />
           <LineChart
@@ -108,6 +127,7 @@ export function Metrics() {
             title="Network in, deployments"
             hint={NETWORK_HINT}
             points={network((p) => p.rx_rate)}
+            binary
             format={formatRate}
           />
           <LineChart
@@ -115,9 +135,44 @@ export function Metrics() {
             title="Network out, deployments"
             hint={NETWORK_HINT}
             points={network((p) => p.tx_rate)}
+            binary
             format={formatRate}
           />
         </div>
+
+        <section class="stack" style={{ gap: "12px" }}>
+          <div class="sec-h">
+            <h2>By deployment</h2>
+            <span>Each deployment's containers added up. The seven busiest get their own line.</span>
+          </div>
+          <Show when={byDeployment.error}>
+            <Note tone="bad">{String(byDeployment.error?.message ?? byDeployment.error)}</Note>
+          </Show>
+          <div class="charts wide" classList={{ refetching: byDeployment.loading && !quiet() }}>
+            <LineChart {...deploymentAxis()} title="CPU" series={perDeployment((p) => p.cpu)} format={formatPercent} />
+            <LineChart
+              {...deploymentAxis()}
+              title="Memory"
+              series={perDeployment((p) => p.mem)}
+              binary
+              format={formatBytes}
+            />
+            <LineChart
+              {...deploymentAxis()}
+              title="Network in"
+              series={perDeployment((p) => p.rx_rate)}
+              binary
+              format={formatRate}
+            />
+            <LineChart
+              {...deploymentAxis()}
+              title="Network out"
+              series={perDeployment((p) => p.tx_rate)}
+              binary
+              format={formatRate}
+            />
+          </div>
+        </section>
 
         <Card
           title={

@@ -122,28 +122,55 @@ fn rate(current: i64, previous: Option<(i64, i64)>, t: i64) -> f64 {
     }
 }
 
-fn aggregate(rows: Vec<ContainerBucket>) -> BTreeMap<String, Vec<ServicePoint>> {
+/// Each container's points, by service and container id. Counters become rates within one container.
+fn per_container(rows: Vec<ContainerBucket>) -> BTreeMap<(String, String), Vec<ServicePoint>> {
     let mut by_container: BTreeMap<(String, String), Vec<ContainerBucket>> = BTreeMap::new();
     for row in rows {
         by_container.entry((row.service.clone(), row.container_id.clone())).or_default().push(row);
     }
+    by_container
+        .into_iter()
+        .map(|(key, mut series)| {
+            series.sort_by_key(|r| r.t);
+            let mut prev: Option<&ContainerBucket> = None;
+            let mut points = Vec::with_capacity(series.len());
+            for row in &series {
+                points.push(ServicePoint {
+                    t: row.t,
+                    cpu: row.cpu,
+                    mem: row.mem as i64,
+                    mem_limit: row.mem_limit,
+                    rx_rate: rate(row.rx, prev.map(|p| (p.t, p.rx)), row.t),
+                    tx_rate: rate(row.tx, prev.map(|p| (p.t, p.tx)), row.t),
+                    read_rate: rate(row.read, prev.map(|p| (p.t, p.read)), row.t),
+                    write_rate: rate(row.write, prev.map(|p| (p.t, p.write)), row.t),
+                });
+                prev = Some(row);
+            }
+            (key, points)
+        })
+        .collect()
+}
+
+fn sum_by_service(containers: &BTreeMap<(String, String), Vec<ServicePoint>>) -> BTreeMap<String, Vec<ServicePoint>> {
     let mut by_service: BTreeMap<String, BTreeMap<i64, ServicePoint>> = BTreeMap::new();
-    for ((service, _), mut series) in by_container {
-        series.sort_by_key(|r| r.t);
-        let mut prev: Option<&ContainerBucket> = None;
-        for row in &series {
-            let point = by_service.entry(service.clone()).or_default().entry(row.t).or_insert_with(|| ServicePoint { t: row.t, ..Default::default() });
-            point.cpu += row.cpu;
-            point.mem += row.mem as i64;
-            point.mem_limit += row.mem_limit;
-            point.rx_rate += rate(row.rx, prev.map(|p| (p.t, p.rx)), row.t);
-            point.tx_rate += rate(row.tx, prev.map(|p| (p.t, p.tx)), row.t);
-            point.read_rate += rate(row.read, prev.map(|p| (p.t, p.read)), row.t);
-            point.write_rate += rate(row.write, prev.map(|p| (p.t, p.write)), row.t);
-            prev = Some(row);
+    for ((service, _), points) in containers {
+        for p in points {
+            let total = by_service.entry(service.clone()).or_default().entry(p.t).or_insert_with(|| ServicePoint { t: p.t, ..Default::default() });
+            total.cpu += p.cpu;
+            total.mem += p.mem;
+            total.mem_limit += p.mem_limit;
+            total.rx_rate += p.rx_rate;
+            total.tx_rate += p.tx_rate;
+            total.read_rate += p.read_rate;
+            total.write_rate += p.write_rate;
         }
     }
     by_service.into_iter().map(|(s, points)| (s, points.into_values().collect())).collect()
+}
+
+fn aggregate(rows: Vec<ContainerBucket>) -> BTreeMap<String, Vec<ServicePoint>> {
+    sum_by_service(&per_container(rows))
 }
 
 pub async fn deployment(
@@ -170,7 +197,45 @@ pub async fn deployment(
     .bind(window.to)
     .fetch_all(&state.db)
     .await?;
-    Ok(Json(json!({ "bucket": b, "services": aggregate(rows) })))
+    let containers = per_container(rows);
+    let services = sum_by_service(&containers);
+    let containers: Vec<Value> = containers
+        .into_iter()
+        .map(|((service, container_id), points)| json!({ "service": service, "container_id": container_id, "points": points }))
+        .collect();
+    Ok(Json(json!({ "bucket": b, "services": services, "containers": containers })))
+}
+
+/// Every deployment the user can see, its containers summed.
+pub async fn by_deployment(State(state): State<AppState>, current: CurrentUser, Query(window): Query<Window>) -> ApiResult<Json<Value>> {
+    let window = window.check()?;
+    let b = window.bucket();
+    let names: BTreeMap<String, String> = crate::deploy::list(&state.db)
+        .await?
+        .into_iter()
+        .filter(|d| current.access.can(&d.id, Permission::DepView))
+        .map(|d| (d.id, d.name))
+        .collect();
+    let rows: Vec<ContainerBucket> = sqlx::query_as(
+        "SELECT s.deployment_id AS service, s.container_id, (m.ts / ?) * ? AS t, AVG(m.cpu_percent) AS cpu, AVG(m.mem_bytes) AS mem,
+                MAX(m.mem_limit) AS mem_limit, MAX(m.net_rx) AS rx, MAX(m.net_tx) AS tx, MAX(m.blk_read) AS read,
+                MAX(m.blk_write) AS write
+         FROM metric_series s JOIN container_metrics m ON m.series_id = s.id
+         WHERE m.ts >= ? AND m.ts <= ?
+         GROUP BY s.deployment_id, s.container_id, t",
+    )
+    .bind(b)
+    .bind(b)
+    .bind(window.from)
+    .bind(window.to)
+    .fetch_all(&state.db)
+    .await?;
+    let rows = rows.into_iter().filter(|r| names.contains_key(&r.service)).collect();
+    let deployments: Vec<Value> = aggregate(rows)
+        .into_iter()
+        .filter_map(|(id, points)| Some(json!({ "id": id, "name": names.get(&id)?, "points": points })))
+        .collect();
+    Ok(Json(json!({ "bucket": b, "deployments": deployments })))
 }
 
 fn collector(state: &AppState) -> Collector {
@@ -364,6 +429,16 @@ mod tests {
         let all = aggregate(vec![a, a2, b, b2]).remove("").unwrap();
         let rates: Vec<(i64, f64)> = all.iter().map(|p| (p.t, p.rx_rate)).collect();
         assert_eq!(rates, [(0, 0.0), (60, 100.0), (120, 10.0)]);
+    }
+
+    #[test]
+    fn each_container_keeps_its_own_series() {
+        let containers = per_container(vec![row("a", 0, 10.0, 50.0, 1000), row("a", 60, 20.0, 60.0, 7000), row("b", 60, 5.0, 40.0, 600)]);
+        let a = &containers[&("web".to_owned(), "a".to_owned())];
+        assert_eq!(a.iter().map(|p| (p.t, p.cpu, p.rx_rate)).collect::<Vec<_>>(), [(0, 10.0, 0.0), (60, 20.0, 100.0)]);
+        let b = &containers[&("web".to_owned(), "b".to_owned())];
+        assert_eq!((b.len(), b[0].mem), (1, 40));
+        assert_eq!(sum_by_service(&containers)["web"][1].cpu, 25.0);
     }
 
     #[test]

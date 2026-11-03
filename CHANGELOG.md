@@ -11,6 +11,8 @@
 - A deployment can allow access to this machine. Its containers then reach the server at `host.docker.internal`, in Compose projects and Swarm stacks. It's off by default and is kept in exports.
 - Deploy output and saved logs show terminal colors instead of codes like `[91m`, and build output no longer puts color codes on lines of their own. Lines redrawn in place, like progress bars, show their last state.
 - Ctrl+C (Cmd+C on a Mac) copies the selected text in live logs and shells. Ctrl+Shift+C copies too. In a shell, Ctrl+C with nothing selected still stops the running command.
+- Charts scale to their data instead of a far-off limit, and leave little empty space above the highest value. Memory and traffic charts step in powers of two, so a 512 MiB limit lands on a gridline. A limit far above the data is named next to the title. A container without a memory limit no longer shows the host's memory as its limit.
+- A deployment's metrics can show each container as its own line, and the Metrics page shows every deployment you can see side by side. The seven busiest get their own line and the rest are added up as "other".
 
 ## [0.1.1] - 2026-11-02
 

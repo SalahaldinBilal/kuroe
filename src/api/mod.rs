@@ -185,6 +185,7 @@ pub fn router(state: AppState) -> Router {
         .route("/update/status", get(update::status))
         .route("/update/latest", get(update::latest))
         .route("/metrics/host", get(metrics::host))
+        .route("/metrics/deployments", get(metrics::by_deployment))
         .route("/storage", get(metrics::storage))
         .route("/storage/refresh", post(metrics::refresh_storage))
         .route("/deployments/{id}/metrics", get(metrics::deployment))

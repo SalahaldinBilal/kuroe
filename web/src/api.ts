@@ -755,9 +755,15 @@ export const api = {
       `/metrics/host?from=${w.from}&to=${w.to}`,
     ),
   deploymentMetrics: (id: string, w: TimeWindow) =>
-    request<{ bucket: number; services: Record<string, ServicePoint[]> }>(
+    request<{
+      bucket: number;
+      services: Record<string, ServicePoint[]>;
+      containers: { service: string; container_id: string; points: ServicePoint[] }[];
+    }>("GET", `/deployments/${id}/metrics?from=${w.from}&to=${w.to}`),
+  metricsByDeployment: (w: TimeWindow) =>
+    request<{ bucket: number; deployments: { id: string; name: string; points: ServicePoint[] }[] }>(
       "GET",
-      `/deployments/${id}/metrics?from=${w.from}&to=${w.to}`,
+      `/metrics/deployments?from=${w.from}&to=${w.to}`,
     ),
   storage: () => request<StorageSnapshot>("GET", "/storage"),
   refreshStorage: () => request<StorageSnapshot>("POST", "/storage/refresh"),
