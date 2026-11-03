@@ -37,6 +37,10 @@ describe("sources", () => {
     expect(isCompose(git)).toBe(true);
     expect(sourceLabel(git)).toBe("https://g/r.git#main · compose.yaml");
     expect(isCompose(spec({ kind: "git", url: "https://g/r.git" }))).toBe(false);
+    const found = spec({ kind: "git", url: "https://g/r.git", compose_file: "" });
+    expect(isCompose(found)).toBe(true);
+    expect(isStatic({ ...found, site: siteOf(NODE_SITE) })).toBe(false);
+    expect(sourceLabel(found)).toBe("https://g/r.git · Compose file");
     expect(isCompose(spec({ kind: "compose", file: "services: {}" }))).toBe(true);
   });
 

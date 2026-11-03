@@ -166,7 +166,17 @@ impl Runner {
             }
             Source::Git { compose_file: Some(file), reference, .. } => {
                 let src = self.clone_source(d, log).await?;
-                let file = file.trim().trim_start_matches("./");
+                let mut file = file.trim().trim_start_matches("./");
+                if file.is_empty() {
+                    file = crate::deploy::spec::find_compose_file(&src).with_context(|| {
+                        format!(
+                            "the repository at {} has none of {}",
+                            reference.as_deref().unwrap_or("its default branch"),
+                            crate::deploy::spec::COMPOSE_FILE_NAMES.join(", ")
+                        )
+                    })?;
+                    log.line(format!("using {file}"));
+                }
                 let path = src.join(file);
                 if !path.is_file() {
                     bail!("{file} is not in the repository at {}", reference.as_deref().unwrap_or("its default branch"));
@@ -186,7 +196,15 @@ impl Runner {
 
         let defaults = self.defaults().await?;
         let stack = strategy == Strategy::Stack;
-        let ctx = rewrite::Context { deployment_id: &d.id, revision, settings: &d.spec.services, defaults: &defaults, host_mounts, stack };
+        let ctx = rewrite::Context {
+            deployment_id: &d.id,
+            revision,
+            settings: &d.spec.services,
+            defaults: &defaults,
+            host_mounts,
+            stack,
+            host_access: d.spec.host_access,
+        };
         let Rewritten { config, builds, requests, warnings } = rewrite::rewrite(config, &ctx)?;
         for warning in &warnings {
             log.line(format!("warning: {warning}"));

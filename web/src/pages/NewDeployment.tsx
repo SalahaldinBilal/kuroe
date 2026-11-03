@@ -28,6 +28,7 @@ import {
   siteOf,
 } from "../spec";
 import useToastState, { errorMessage } from "../states/toastState";
+import { HOST_ACCESS_HINT } from "./ServiceSettings";
 
 const NAME_PATTERN = "[a-z0-9][a-z0-9\\-]{0,39}";
 const IMAGE_SITE_FOLDER = "/usr/share/nginx/html";
@@ -86,6 +87,7 @@ export function NewDeployment() {
   const [compose, setCompose] = createSignal("");
   const [ports, setPorts] = createSignal<PortRow[]>([emptyPort()]);
   const [env, setEnv] = createSignal<EnvRow[]>([emptyEnv()]);
+  const [hostAccess, setHostAccess] = createSignal(false);
   const [mode, setMode] = createSignal<RunMode>("compose");
   const [deployNow, setDeployNow] = createSignal(true);
   const [error, setError] = createSignal("");
@@ -108,7 +110,6 @@ export function NewDeployment() {
     const g = git();
     const saved = access() !== "public" && access() !== "token" ? access() : null;
     const compose = !siteMode && buildWith() === "compose";
-    if (compose && !g.compose.trim()) throw new Error("Give the path of the Compose file in the repository");
     return {
       kind: "git",
       url: g.url.trim(),
@@ -165,6 +166,7 @@ export function NewDeployment() {
         secret_refs: token ? { ...refs, [GIT_TOKEN_REF]: token } : refs,
         mode: staticLike() ? ("compose" as const) : mode(),
         site: staticLike() ? siteOf(siteFrom() === "image" ? { ...site(), build: "none" } : site()) : null,
+        host_access: !staticLike() && hostAccess(),
       };
       const created = await api.createDeployment(name().trim(), spec);
       const file = archive();
@@ -411,7 +413,7 @@ export function NewDeployment() {
                       <Field
                         label="Compose file"
                         grow
-                        hint="Path inside the repository. Its relative paths and its .env file resolve from the folder it's in."
+                        hint="Path inside the repository. Leave it empty to use compose.yaml or docker-compose.yml from the root. Its relative paths and .env file resolve from its folder."
                       >
                         <Input
                           mono
@@ -544,48 +546,55 @@ export function NewDeployment() {
           </div>
         </Card>
 
-        <Show when={!composeLike() || ready(info)?.swarm_manager}>
-          <Card
-            title={staticLike() ? "Build environment" : "Container"}
-            description="You can change these later in the deployment settings"
-          >
-            <div class="card-b stack" style={{ gap: "20px" }}>
-              <Show when={!composeLike() && !staticLike()}>
-                <Field label="Ports" hint="Host ports bind to 127.0.0.1.">
-                  <PortRows rows={ports()} onChange={setPorts} />
-                </Field>
-              </Show>
-              <Show when={!composeLike() && !(staticLike() && siteFrom() === "image")}>
-                <Field
-                  label="Environment"
-                  hint={
-                    staticLike()
-                      ? "Passed to the build command, like VITE_API_URL. Secrets are hidden from viewers and left out of exports."
-                      : "Use the lock to mark a value secret. Secrets are hidden from viewers and left out of exports."
-                  }
-                >
-                  <EnvRows rows={env()} onChange={setEnv} />
-                </Field>
-              </Show>
-              <Show when={staticLike() && siteFrom() === "image"}>
-                <span class="hint">The image's files are served as they are, so there's nothing to set here.</span>
-              </Show>
-              <Show when={ready(info)?.swarm_manager && !staticLike()}>
-                <Field label="Run as" hint="A Swarm stack gives rolling updates and replicas across nodes.">
-                  <SegmentedControl
-                    label="Run as"
-                    value={mode()}
-                    onChange={setMode}
-                    options={[
-                      { value: "compose" as const, label: "Compose project" },
-                      { value: "stack" as const, label: "Swarm stack" },
-                    ]}
-                  />
-                </Field>
-              </Show>
-            </div>
-          </Card>
-        </Show>
+        <Card
+          title={staticLike() ? "Build environment" : composeLike() ? "Variables" : "Container"}
+          description={
+            composeLike()
+              ? "They fill the variables in the Compose file when it deploys. You can change them later in the deployment settings"
+              : "You can change these later in the deployment settings"
+          }
+        >
+          <div class="card-b stack" style={{ gap: "20px" }}>
+            <Show when={!composeLike() && !staticLike()}>
+              <Field label="Ports" hint="Host ports bind to 127.0.0.1.">
+                <PortRows rows={ports()} onChange={setPorts} />
+              </Field>
+            </Show>
+            <Show when={!(staticLike() && siteFrom() === "image")}>
+              <Field
+                label="Environment"
+                hint={
+                  staticLike()
+                    ? "Passed to the build command, like VITE_API_URL. Secrets are hidden from viewers and left out of exports."
+                    : "Use the lock to mark a value secret. Secrets are hidden from viewers and left out of exports."
+                }
+              >
+                <EnvRows rows={env()} onChange={setEnv} />
+              </Field>
+            </Show>
+            <Show when={staticLike() && siteFrom() === "image"}>
+              <span class="hint">The image's files are served as they are, so there's nothing to set here.</span>
+            </Show>
+            <Show when={!staticLike()}>
+              <Field label="Network" hint={HOST_ACCESS_HINT}>
+                <Switch label="Allow access to this machine" checked={hostAccess()} onChange={setHostAccess} />
+              </Field>
+            </Show>
+            <Show when={ready(info)?.swarm_manager && !staticLike()}>
+              <Field label="Run as" hint="A Swarm stack gives rolling updates and replicas across nodes.">
+                <SegmentedControl
+                  label="Run as"
+                  value={mode()}
+                  onChange={setMode}
+                  options={[
+                    { value: "compose" as const, label: "Compose project" },
+                    { value: "stack" as const, label: "Swarm stack" },
+                  ]}
+                />
+              </Field>
+            </Show>
+          </div>
+        </Card>
 
         <Show when={error()}>
           <Note tone="bad">{error()}</Note>

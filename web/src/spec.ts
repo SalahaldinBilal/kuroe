@@ -118,14 +118,14 @@ export function parseMbit(text: string, what: string): number | null {
 
 /** Compose source, or a git repository deployed from its own Compose file. */
 export function isCompose(spec: Spec): boolean {
-  return spec.source.kind === "compose" || (spec.source.kind === "git" && !!spec.source.compose_file);
+  return spec.source.kind === "compose" || (spec.source.kind === "git" && spec.source.compose_file != null);
 }
 
 /** Files served by the shared static server, from a git repository, an image or an uploaded archive. */
 export function isStatic(spec: Spec): boolean {
   if (!spec.site) return false;
   const s = spec.source;
-  return s.kind === "static" || s.kind === "image" || (s.kind === "git" && !s.compose_file);
+  return s.kind === "static" || s.kind === "image" || (s.kind === "git" && s.compose_file == null);
 }
 
 export interface SiteDraft {
@@ -180,7 +180,8 @@ export function sourceLabel(spec: Spec): string {
     case "image":
       return spec.site ? `${s.image} · static site from ${spec.site.output}` : s.image;
     case "git": {
-      const extra = s.compose_file ? ` · ${s.compose_file}` : spec.site ? " · static site" : "";
+      const extra =
+        s.compose_file != null ? ` · ${s.compose_file || "Compose file"}` : spec.site ? " · static site" : "";
       return `${s.url}${s.reference ? `#${s.reference}` : ""}${extra}`;
     }
     case "upload":

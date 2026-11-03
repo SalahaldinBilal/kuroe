@@ -27,6 +27,9 @@ import {
 } from "../spec";
 import useToastState, { errorMessage } from "../states/toastState";
 
+export const HOST_ACCESS_HINT =
+  "Containers reach this server at host.docker.internal. Services on the server must listen on 0.0.0.0 or the Docker bridge address, not only 127.0.0.1.";
+
 interface Props {
   detail: DeploymentDetail;
   onSaved: (spec: Spec) => void;
@@ -47,6 +50,7 @@ interface Draft {
   ports: PortRow[];
   env: EnvRow[];
   services: Record<string, ServiceDraft>;
+  hostAccess: boolean;
 }
 
 function serviceNames(d: DeploymentDetail): string[] {
@@ -74,6 +78,7 @@ function draftOf(d: DeploymentDetail): Draft {
     ports: portsToRows(d.spec.container.ports),
     env: envToRows(d.spec.container.env, d.spec.secrets ?? [], d.spec.secret_refs),
     services: Object.fromEntries(serviceNames(d).map((n) => [n, serviceDraft(d.spec.services[n])])),
+    hostAccess: d.spec.host_access ?? false,
   };
 }
 
@@ -153,6 +158,7 @@ export function ServiceSettingsForm(props: Props) {
         },
         secrets,
         secret_refs: withEnvRefs(current, refs),
+        host_access: d.hostAccess,
       };
       await api.updateDeployment(props.detail.id, spec);
       props.onSaved(spec);
@@ -197,6 +203,12 @@ export function ServiceSettingsForm(props: Props) {
           </div>
         </Card>
       </Show>
+
+      <Card title="Network">
+        <SettingRow label="Allow access to this machine" description={HOST_ACCESS_HINT}>
+          <Switch checked={draft().hostAccess} onChange={(hostAccess) => setDraft({ ...draft(), hostAccess })} />
+        </SettingRow>
+      </Card>
 
       <For each={names()}>
         {(name) => {

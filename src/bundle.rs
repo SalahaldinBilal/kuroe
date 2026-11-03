@@ -266,6 +266,8 @@ pub struct DeploymentBundle {
     pub secret_refs: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub site: Option<SiteOptions>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub host_access: bool,
     #[serde(default, rename = "domain")]
     pub domains: Vec<DomainBundle>,
     /// Deploy tokens by name. Their values are stored hashed, so import makes new ones.
@@ -309,6 +311,7 @@ impl DeploymentBundle {
             services: spec.services,
             secret_refs: spec.secret_refs,
             site: spec.site,
+            host_access: spec.host_access,
             domains,
             tokens: Vec::new(),
         }
@@ -324,6 +327,7 @@ impl DeploymentBundle {
             secrets: self.secrets.iter().filter(|k| *k != GIT_TOKEN).cloned().collect(),
             secret_refs: refs,
             site: self.site.clone(),
+            host_access: self.host_access,
         };
         for key in &spec.secrets {
             if let Some(value) = secrets.get(&secret_key(&self.name, key)) {
@@ -741,6 +745,7 @@ fn changed_fields(old: &DeploymentBundle, new: &DeploymentBundle) -> Vec<String>
     check("secrets", old.secrets == new.secrets);
     check("services", old.services == new.services);
     check("site", old.site == new.site);
+    check("host access", old.host_access == new.host_access);
     check("domains", old.domains == new.domains);
     check("saved secrets", old.secret_refs == new.secret_refs);
     check("webhook", old.webhook == new.webhook);
@@ -1235,7 +1240,8 @@ mod tests {
             .await
             .unwrap();
 
-        let compose = Spec::new(Source::Compose { file: "services:\n  web:\n    image: nginx:alpine\n".into() });
+        let mut compose = Spec::new(Source::Compose { file: "services:\n  web:\n    image: nginx:alpine\n".into() });
+        compose.host_access = true;
         deploy::create(db, "stack", &compose, &owner).await.unwrap();
         owner
     }
@@ -1251,6 +1257,7 @@ mod tests {
         assert!(first.contains(r#"command = "npm ci && npm run build""#), "static sites keep their build step:\n{first}");
         assert!(first.contains(r#"redirect = "https://www.example.com""#), "domains keep their redirect:\n{first}");
         assert!(first.contains("Back soon"), "domains keep their error pages:\n{first}");
+        assert_eq!(first.matches("host_access = true").count(), 1, "only the deployment that has it:\n{first}");
 
         let b = test_pool().await;
         let owner_b = auth::create_user(&b, "boss", "other-password-1", Role::owner()).await.unwrap();

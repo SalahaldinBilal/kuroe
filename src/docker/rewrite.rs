@@ -71,7 +71,10 @@ pub struct Context<'a> {
     pub defaults: &'a Defaults,
     pub host_mounts: bool,
     pub stack: bool,
+    pub host_access: bool,
 }
+
+const HOST_INTERNAL: &str = "host.docker.internal";
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Build {
@@ -208,6 +211,9 @@ pub fn rewrite(mut config: Value, ctx: &Context) -> anyhow::Result<Rewritten> {
                 networks.insert("default".into(), Value::Null);
             }
             networks.insert(proxy_network(ctx).into(), Value::Null);
+            if ctx.host_access {
+                add_host_gateway(service);
+            }
         }
 
         for mount in &settings.volumes {
@@ -354,6 +360,19 @@ fn effective_limits(
     (cpus, memory, pids)
 }
 
+/// Keeps a mapping the Compose file already gives for the name.
+fn add_host_gateway(service: &mut Map<String, Value>) {
+    if let Some(Value::Object(hosts)) = service.get_mut("extra_hosts") {
+        hosts.entry(HOST_INTERNAL).or_insert_with(|| json!(["host-gateway"]));
+        return;
+    }
+    let hosts = array_entry(service, "extra_hosts");
+    let named = |entry: &Value| entry.as_str().and_then(|e| e.split(['=', ':']).next()).map(str::trim) == Some(HOST_INTERNAL);
+    if !hosts.iter().any(named) {
+        hosts.push(json!(format!("{HOST_INTERNAL}=host-gateway")));
+    }
+}
+
 fn object_entry<'a>(map: &'a mut Map<String, Value>, key: &str) -> &'a mut Map<String, Value> {
     let entry = map.entry(key).or_insert_with(|| json!({}));
     if !entry.is_object() {
@@ -455,8 +474,53 @@ mod tests {
     }
 
     fn run_with(input: Value, settings: BTreeMap<String, ServiceSettings>, host_mounts: bool, defaults: &Defaults) -> Rewritten {
-        let ctx = Context { deployment_id: "dep1", revision: 3, settings: &settings, defaults, host_mounts, stack: false };
+        let ctx = Context { deployment_id: "dep1", revision: 3, settings: &settings, defaults, host_mounts, stack: false, host_access: false };
         rewrite(input, &ctx).unwrap()
+    }
+
+    fn run_host_access(input: Value, stack: bool) -> Rewritten {
+        let settings = BTreeMap::new();
+        let defaults = Defaults::default();
+        let ctx = Context { deployment_id: "dep1", revision: 3, settings: &settings, defaults: &defaults, host_mounts: false, stack, host_access: true };
+        rewrite(input, &ctx).unwrap()
+    }
+
+    #[test]
+    fn host_access_maps_host_docker_internal_to_the_gateway() {
+        let off = run_with(web_input(), BTreeMap::new(), false, &Defaults::default());
+        assert!(off.config["services"]["web"].get("extra_hosts").is_none(), "off by default");
+
+        let on = run_host_access(web_input(), false);
+        assert_eq!(on.config["services"]["web"]["extra_hosts"], json!(["host.docker.internal=host-gateway"]));
+        assert!(on.warnings.is_empty());
+
+        let mut own = web_input();
+        own["services"]["web"]["extra_hosts"] = json!(["db=10.0.0.5", "host.docker.internal=172.17.0.1"]);
+        let kept = run_host_access(own, false);
+        assert_eq!(kept.config["services"]["web"]["extra_hosts"], json!(["db=10.0.0.5", "host.docker.internal=172.17.0.1"]), "the file's own mapping wins");
+
+        let mut colon = web_input();
+        colon["services"]["web"]["extra_hosts"] = json!(["db:10.0.0.5"]);
+        let added = run_host_access(colon, false);
+        assert_eq!(added.config["services"]["web"]["extra_hosts"], json!(["db:10.0.0.5", "host.docker.internal=host-gateway"]));
+
+        let mut map = web_input();
+        map["services"]["web"]["extra_hosts"] = json!({ "db": ["10.0.0.5"] });
+        let mapped = run_host_access(map, false);
+        assert_eq!(mapped.config["services"]["web"]["extra_hosts"], json!({ "db": ["10.0.0.5"], "host.docker.internal": ["host-gateway"] }));
+
+        let mut shared = web_input();
+        shared["services"]["web"]["network_mode"] = json!("service:db");
+        let shared = run_host_access(shared, false);
+        assert!(shared.config["services"]["web"].get("extra_hosts").is_none(), "a shared network takes its hosts from the other service");
+
+        let mut host = web_input();
+        host["services"]["web"]["network_mode"] = json!("host");
+        let host = run_host_access(host, false);
+        assert_eq!(host.config["services"]["web"]["extra_hosts"], json!(["host.docker.internal=host-gateway"]), "host networking is removed first");
+
+        let stack = run_host_access(web_input(), true);
+        assert_eq!(stack.config["services"]["web"]["extra_hosts"], json!(["host.docker.internal=host-gateway"]), "Swarm resolves host-gateway too");
     }
 
     #[test]
@@ -481,7 +545,7 @@ mod tests {
 
     fn run_stack(input: Value, settings: BTreeMap<String, ServiceSettings>) -> Rewritten {
         let defaults = defaults();
-        let ctx = Context { deployment_id: "dep1", revision: 3, settings: &settings, defaults: &defaults, host_mounts: false, stack: true };
+        let ctx = Context { deployment_id: "dep1", revision: 3, settings: &settings, defaults: &defaults, host_mounts: false, stack: true, host_access: false };
         rewrite(input, &ctx).unwrap()
     }
 

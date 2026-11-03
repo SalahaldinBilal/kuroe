@@ -32,6 +32,7 @@ pub enum Source {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         identity: Option<String>,
         /// A Compose file inside the repository. When set, the repository is deployed as a Compose stack.
+        /// Empty means the file Docker itself would pick, see `find_compose_file`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         compose_file: Option<String>,
     },
@@ -111,6 +112,9 @@ pub struct Spec {
     /// Set for a static site: the source is built (or not) and the output folder is served by the shared static server.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub site: Option<SiteOptions>,
+    /// Containers reach the host at `host.docker.internal`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub host_access: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -179,6 +183,7 @@ impl Spec {
             secrets: Default::default(),
             secret_refs: Default::default(),
             site: Default::default(),
+            host_access: false,
         }
     }
 
@@ -279,12 +284,16 @@ impl Spec {
     }
 }
 
-/// A Compose file path has to stay inside the repository.
+/// The names `docker compose` looks for, in its order.
+pub const COMPOSE_FILE_NAMES: [&str; 4] = ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"];
+
+pub fn find_compose_file(dir: &std::path::Path) -> Option<&'static str> {
+    COMPOSE_FILE_NAMES.into_iter().find(|name| dir.join(name).is_file())
+}
+
+/// A Compose file path has to stay inside the repository. Empty is fine, the file is found when deploying.
 pub fn check_compose_file(path: &str) -> Result<(), String> {
     let path = path.trim();
-    if path.is_empty() {
-        return Err("the Compose file path is empty".into());
-    }
     let absolute = path.starts_with(['/', '\\']) || path.as_bytes().get(1) == Some(&b':');
     if absolute {
         return Err(format!("{path} is absolute, give a path inside the repository"));
@@ -383,12 +392,24 @@ mod tests {
         assert!(check_compose_file("compose.yaml").is_ok());
         assert!(check_compose_file("deploy/compose.prod.yaml").is_ok());
         assert!(check_compose_file("./compose.yaml").is_ok());
-        assert!(check_compose_file("").is_err());
-        assert!(check_compose_file("  ").is_err());
+        assert!(check_compose_file("").is_ok());
+        assert!(check_compose_file("  ").is_ok());
         assert!(check_compose_file("/etc/compose.yaml").is_err());
         assert!(check_compose_file("C:\\compose.yaml").is_err());
         assert!(check_compose_file("../other/compose.yaml").is_err());
         assert!(check_compose_file("deploy/../../compose.yaml").is_err());
+    }
+
+    #[test]
+    fn finds_the_compose_file_docker_would_pick() {
+        let dir = std::env::temp_dir().join(format!("kuroe-compose-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("compose.yaml")).unwrap();
+        assert_eq!(find_compose_file(&dir), None, "a folder isn't a file");
+        std::fs::write(dir.join("docker-compose.yml"), "services: {}").unwrap();
+        assert_eq!(find_compose_file(&dir), Some("docker-compose.yml"));
+        std::fs::write(dir.join("compose.yml"), "services: {}").unwrap();
+        assert_eq!(find_compose_file(&dir), Some("compose.yml"), "the newer name wins");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -406,6 +427,7 @@ mod tests {
         };
         assert!(!git(None).is_compose());
         assert!(git(Some("compose.yaml")).is_compose());
+        assert!(git(Some("")).is_compose(), "an empty path finds the file when deploying");
         let tagged = git(Some("compose.yaml")).with_tag("v2").unwrap();
         assert!(matches!(tagged.source, Source::Git { reference: Some(ref r), compose_file: Some(_), .. } if r == "v2"));
     }

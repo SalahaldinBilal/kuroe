@@ -207,6 +207,7 @@ export interface Spec {
   /** Env keys, and GIT_TOKEN_REF for the git token, that use a saved secret, by its id. */
   secret_refs?: Record<string, string>;
   site?: SiteOptions | null;
+  host_access?: boolean;
 }
 
 export const GIT_TOKEN_REF = "@git_token";
