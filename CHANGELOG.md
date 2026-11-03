@@ -9,6 +9,8 @@
 - A Git repository deployed with its Compose file no longer needs the file's path. Left empty, kuroe uses `compose.yaml`, `compose.yml`, `docker-compose.yaml` or `docker-compose.yml` from the repository root, the same files Docker looks for.
 - New deployment shows the environment variables for Compose deployments too, a pasted Compose file or one from a repository. They fill the variables in the Compose file, as they already did when set in the deployment settings.
 - A deployment can allow access to this machine. Its containers then reach the server at `host.docker.internal`, in Compose projects and Swarm stacks. It's off by default and is kept in exports.
+- Deploy output and saved logs show terminal colors instead of codes like `[91m`, and build output no longer puts color codes on lines of their own. Lines redrawn in place, like progress bars, show their last state.
+- Ctrl+C (Cmd+C on a Mac) copies the selected text in live logs and shells. Ctrl+Shift+C copies too. In a shell, Ctrl+C with nothing selected still stops the running command.
 
 ## [0.1.1] - 2026-11-02
 

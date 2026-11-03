@@ -87,6 +87,75 @@ struct ProjectContainer {
     ip: Option<String>,
 }
 
+/// Turns Docker's build stream, which splits wherever it likes, into whole lines.
+/// Color codes alone on a line move to the next one, and a line redrawn with `\r` keeps its last frame.
+#[derive(Default)]
+struct Lines {
+    partial: String,
+    carried: String,
+}
+
+impl Lines {
+    fn push(&mut self, chunk: &str) -> Vec<String> {
+        self.partial.push_str(chunk);
+        let mut out = Vec::new();
+        while let Some(end) = self.partial.find('\n') {
+            let line: String = self.partial.drain(..=end).collect();
+            self.take(&line, &mut out);
+        }
+        out
+    }
+
+    fn finish(&mut self) -> Vec<String> {
+        let rest = std::mem::take(&mut self.partial);
+        let mut out = Vec::new();
+        self.take(&rest, &mut out);
+        out
+    }
+
+    fn take(&mut self, line: &str, out: &mut Vec<String>) {
+        let line = line.trim_end_matches(['\n', '\r']);
+        let line = line.rsplit('\r').find(|frame| !strip_ansi(frame).trim().is_empty()).unwrap_or(line);
+        if strip_ansi(line).trim().is_empty() {
+            if line.contains('\u{1b}') {
+                self.carried.push_str(line.trim());
+            }
+            return;
+        }
+        out.push(format!("{}{}", std::mem::take(&mut self.carried), line.trim_end()));
+    }
+}
+
+/// Drops escape sequences: CSI like `ESC[31m`, OSC like window titles, and two-character escapes.
+fn strip_ansi(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('[') => {
+                for c in chars.by_ref() {
+                    if ('@'..='~').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                while let Some(c) = chars.next() {
+                    if c == '\u{7}' || (c == '\u{1b}' && chars.next_if_eq(&'\\').is_some()) {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 pub struct Log(Vec<String>);
 
 impl Log {
@@ -961,18 +1030,20 @@ impl Runner {
         log: &mut Log,
     ) -> anyhow::Result<()> {
         let mut stream = self.docker.build_image(options, None, body.map(bollard::body_full));
+        let mut lines = Lines::default();
         while let Some(item) = stream.next().await {
             let info = item?;
             if let Some(text) = info.stream {
-                let text = text.trim_end();
-                if !text.is_empty() {
-                    log.line(text);
+                for line in lines.push(&text) {
+                    log.line(line);
                 }
             }
             if let Some(err) = info.error_detail {
+                lines.finish().into_iter().for_each(|line| log.line(line));
                 bail!("build of {service} failed: {}", err.message.unwrap_or_default());
             }
         }
+        lines.finish().into_iter().for_each(|line| log.line(line));
         Ok(())
     }
 
@@ -1165,6 +1236,30 @@ mod tests {
     use super::*;
 
     const GIB: u64 = 1 << 30;
+
+    #[test]
+    fn build_stream_becomes_whole_lines_with_their_colors() {
+        let mut lines = Lines::default();
+        let mut out = Vec::new();
+        for chunk in ["\u{1b}[91m", "  Downloaded itoa v1.0.18\n", "\u{1b}[0m", "\u{1b}[91m  Downloaded ", "matchit v0.8.4\n", "\u{1b}[0m"] {
+            out.extend(lines.push(chunk));
+        }
+        out.extend(lines.finish());
+        assert_eq!(out, ["\u{1b}[91m  Downloaded itoa v1.0.18", "\u{1b}[0m\u{1b}[91m  Downloaded matchit v0.8.4"]);
+
+        let mut lines = Lines::default();
+        let mut out = lines.push("Step 1/3 : FROM alpine\n\n   \nfetch 10%\rfetch 55%\rfetch 100%\r\nno newline at the end");
+        out.extend(lines.finish());
+        assert_eq!(out, ["Step 1/3 : FROM alpine", "fetch 100%", "no newline at the end"]);
+    }
+
+    #[test]
+    fn strip_ansi_keeps_only_the_text() {
+        assert_eq!(strip_ansi("\u{1b}[1;31merror\u{1b}[0m: x"), "error: x");
+        assert_eq!(strip_ansi("\u{1b}]0;title\u{7}after"), "after");
+        assert_eq!(strip_ansi("\u{1b}]8;;https://x\u{1b}\\link\u{1b}]8;;\u{1b}\\"), "link");
+        assert_eq!(strip_ansi("plain"), "plain");
+    }
 
     async fn sample(db: &SqlitePool, container: &str, ts: i64, cpu_percent: f64, mem_bytes: i64) {
         let series = crate::collect::stats::series_id(db, "dep", "web", container).await.unwrap();

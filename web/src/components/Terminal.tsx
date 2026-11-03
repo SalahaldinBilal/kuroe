@@ -3,6 +3,8 @@ import { AttachAddon } from "@xterm/addon-attach";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
+import { copyKey } from "../terminalKeys";
+import { copyText } from "./ui/Overlay";
 
 interface Props {
   url: string;
@@ -12,6 +14,32 @@ interface Props {
 
 function token(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+const PALETTE_KEYS = [
+  "black",
+  "red",
+  "green",
+  "yellow",
+  "blue",
+  "magenta",
+  "cyan",
+  "white",
+  "brightBlack",
+  "brightRed",
+  "brightGreen",
+  "brightYellow",
+  "brightBlue",
+  "brightMagenta",
+  "brightCyan",
+  "brightWhite",
+] as const;
+
+function palette(): Record<(typeof PALETTE_KEYS)[number], string> {
+  return Object.fromEntries(PALETTE_KEYS.map((key, i) => [key, token(`--ansi-${i}`)])) as Record<
+    (typeof PALETTE_KEYS)[number],
+    string
+  >;
 }
 
 export function Terminal(props: Props) {
@@ -32,7 +60,15 @@ export function Terminal(props: Props) {
         cursor: token("--term-text"),
         selectionBackground: token("--term-selection"),
         selectionInactiveBackground: token("--term-selection"),
+        ...palette(),
       },
+    });
+    term.attachCustomKeyEventHandler((event) => {
+      const action = copyKey(event, term.hasSelection());
+      if (action === "pass") return true;
+      event.preventDefault();
+      if (action === "copy") void copyText(term.getSelection()).then(() => term.focus());
+      return false;
     });
     const fit = new FitAddon();
     term.loadAddon(fit);

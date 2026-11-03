@@ -1,6 +1,8 @@
 import { createEffect, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { stripAnsi } from "../ansi";
 import { api, type LogFile } from "../api";
 import { formatBytes } from "../format";
+import { AnsiText } from "./AnsiText";
 import { Card, Pill } from "./ui/Blocks";
 import EmptyState from "./ui/EmptyState/EmptyState";
 import { Icon } from "./ui/Icon";
@@ -47,7 +49,7 @@ export function LogHistory(props: Props) {
     if (!needle) return text();
     return text()
       .split("\n")
-      .filter((line) => line.toLowerCase().includes(needle))
+      .filter((line) => stripAnsi(line).toLowerCase().includes(needle))
       .join("\n");
   };
 
@@ -122,7 +124,7 @@ export function LogHistory(props: Props) {
               }
             >
               <pre class="term" ref={output} style={{ height: "520px" }}>
-                {shown()}
+                <AnsiText text={shown()} />
               </pre>
             </Card>
           )}

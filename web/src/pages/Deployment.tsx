@@ -3,6 +3,7 @@ import { createEffect, createResource, createSignal, For, Match, onCleanup, Show
 import { useUser } from "../App";
 import { api, type ContainerRow, can, type DeploymentDetail, type Permission, socketUrl } from "../api";
 import { AccessPanel } from "../components/AccessPanel";
+import { AnsiText } from "../components/AnsiText";
 import { CiPanel } from "../components/CiPanel";
 import { DeploymentMetrics } from "../components/DeploymentMetrics";
 import { Domains } from "../components/Domains";
@@ -423,7 +424,7 @@ function Overview(props: OverviewProps) {
               <ProgressBar />
               <Show when={tail()}>
                 <pre class="term" style={{ "max-height": "220px", "border-radius": "6px" }}>
-                  {tail()}
+                  <AnsiText text={tail()} />
                 </pre>
               </Show>
             </div>
@@ -539,7 +540,9 @@ function Overview(props: OverviewProps) {
             <span class="muted">revision {d().revision}</span>
             <Icon name="down" class="chev" />
           </summary>
-          <pre class="term">{d().last_output}</pre>
+          <pre class="term">
+            <AnsiText text={d().last_output} />
+          </pre>
         </details>
       </Show>
     </div>
