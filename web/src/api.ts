@@ -336,6 +336,27 @@ export type LiveDeployMessage =
   | { kind: "partial"; text: string | null }
   | { kind: "steps"; steps: DeployStep[] };
 
+export interface PreviewRequest {
+  port: number;
+  method: string;
+  /** With the query string. */
+  path: string;
+  headers: [string, string][];
+  /** Base64. */
+  body: string | null;
+}
+
+export interface PreviewAnswer {
+  status: number;
+  reason: string | null;
+  headers: [string, string][];
+  /** Base64, cut off at 16 MiB. */
+  body: string;
+  size: number;
+  truncated: boolean;
+  time_ms: number;
+}
+
 export interface DeploymentRow extends Deployment {
   /** The step a running deploy is in. */
   step: DeployStep | null;
@@ -793,6 +814,8 @@ export const api = {
   deploy: (id: string) => request<void>("POST", `/deployments/${id}/deploy`),
   cancelDeploy: (id: string) => request<void>("POST", `/deployments/${id}/deploy/cancel`),
   deploySocket: (id: string) => socketUrl(`/deployments/${id}/deploy/ws`),
+  sendPreviewRequest: (container: string, outgoing: PreviewRequest) =>
+    request<PreviewAnswer>("POST", `/containers/${container}/request`, outgoing),
   deploys: (id: string, offset = 0, limit = 20) =>
     request<{ deploys: DeploySummary[]; more: boolean }>(
       "GET",

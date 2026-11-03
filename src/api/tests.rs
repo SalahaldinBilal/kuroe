@@ -252,6 +252,25 @@ async fn cancelling_needs_the_deploy_permission_and_a_running_deploy() {
 }
 
 #[tokio::test]
+async fn preview_requests_need_a_session_and_the_csrf_header() {
+    let (app, state) = app().await;
+    let owner = auth::create_user(&state.db, "boss", "boss-password-1", Role::owner()).await.unwrap();
+    let boss = auth::create_session(&state.db, &owner.id).await.unwrap();
+    let body = json!({ "port": 80, "method": "GET", "path": "/" });
+    let (status, _, _) = send(&app, request(Method::POST, "/api/v1/containers/c1/request", None, Some(body.clone()))).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let no_csrf = Request::builder()
+        .method(Method::POST)
+        .uri("/api/v1/containers/c1/request")
+        .header(header::COOKIE, format!("{}={boss}", auth::SESSION_COOKIE))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let (status, _, _) = send(&app, no_csrf).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn deploy_history_pages_and_stays_inside_its_deployment() {
     use crate::deploy::history::{self, DeploySource, Started};
     use crate::deploy::{self, Source, Spec};

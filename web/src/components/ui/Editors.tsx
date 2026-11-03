@@ -32,6 +32,45 @@ function AddButton(props: { label: string; onClick: () => void }) {
   );
 }
 
+interface PairRowsProps {
+  rows: { key: string; value: string }[];
+  keyLabel: string;
+  valueLabel: string;
+  addLabel: string;
+  onChange: (rows: { key: string; value: string }[]) => void;
+}
+
+/** Plain name and value rows, like query params or headers. */
+export function PairRows(props: PairRowsProps) {
+  return (
+    <div class="kv">
+      <Index each={props.rows}>
+        {(row, i) => (
+          <div class="kvrow">
+            <Input
+              mono
+              class="k"
+              label={props.keyLabel}
+              placeholder={props.keyLabel}
+              value={row().key}
+              onValue={(key) => props.onChange(patch(props.rows, i, { key }))}
+            />
+            <Input
+              mono
+              label={props.valueLabel}
+              placeholder={props.valueLabel}
+              value={row().value}
+              onValue={(value) => props.onChange(patch(props.rows, i, { value }))}
+            />
+            <RemoveButton onClick={() => props.onChange(props.rows.filter((_, j) => j !== i))} />
+          </div>
+        )}
+      </Index>
+      <AddButton label={props.addLabel} onClick={() => props.onChange([...props.rows, { key: "", value: "" }])} />
+    </div>
+  );
+}
+
 const PROTOCOLS = items(["tcp", "udp"]);
 
 export function PortRows(props: { rows: PortRow[]; onChange: (rows: PortRow[]) => void }) {

@@ -31,7 +31,8 @@ describe("sourceText", () => {
     expect(sourceText({ kind: "image", image: "nginx:1.29", digest: `sha256:${"ab".repeat(32)}` })).toBe(
       "nginx:1.29@abababababab",
     );
-    expect(sourceText({ kind: "compose" })).toBe("compose");
+    expect(sourceText({ kind: "compose" })).toBe("Compose file");
+    expect(sourceText({ kind: "dockerfile" })).toBe("Dockerfile");
   });
 });
 

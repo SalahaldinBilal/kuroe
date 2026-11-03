@@ -532,16 +532,29 @@ function Overview(props: OverviewProps) {
         )}
       </For>
 
-      <Card title="Containers" actions={<span class="count">{d().containers.length}</span>}>
+      <Card
+        title="Containers"
+        actions={
+          <>
+            <Show when={has(d(), "dep.shell") && d().containers.some((c) => c.state === "running")}>
+              <Button size="sm" href={`/deployments/${d().id}/preview`}>
+                <Icon name="activity" />
+                Preview
+              </Button>
+            </Show>
+            <span class="count">{d().containers.length}</span>
+          </>
+        }
+      >
         <Show
           when={d().containers.length > 0}
           fallback={
             <EmptyState
               icon="box"
               title="No containers"
-              description="Deploy to start them."
+              description={d().status === "deploying" ? "The deploy starts them." : "Deploy to start them."}
               actions={
-                <Show when={has(d(), "dep.deploy")}>
+                <Show when={has(d(), "dep.deploy") && d().status !== "deploying"}>
                   <Button variant="primary" size="sm" disabled={props.busy} onClick={props.onDeploy}>
                     <Icon name="play" />
                     Deploy
@@ -568,11 +581,11 @@ function Overview(props: OverviewProps) {
                     <Show when={has(d(), "dep.shell") && running()}>
                       <For each={c.private_ports}>
                         {(port) => (
-                          <Tip content="Open a preview through kuroe">
-                            <a class="chip" href={`/preview/${c.id}/${port}/`} target="_blank" rel="noreferrer">
+                          <Tip content="Send requests to this port">
+                            <A class="chip" href={`/deployments/${d().id}/preview?container=${c.id}&port=${port}`}>
                               :{port}
-                              <Icon name="ext" />
-                            </a>
+                              <Icon name="right" />
+                            </A>
                           </Tip>
                         )}
                       </For>

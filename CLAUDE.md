@@ -14,7 +14,7 @@ src/
     http_access.rs  plain HTTP open or local only
     mcp.rs       read-only MCP server at /api/v1/mcp
     ci.rs, pipelines.rs  push webhooks and generated CI configs
-    preview.rs   /preview/<container>/<port>/ reverse proxy
+    preview.rs   /preview/<container>/<port>/ reverse proxy, and the requests the Preview page sends
     tests.rs     API tests (need the Docker socket, see Commands)
   auth/          sessions, roles and permissions (rbac.rs), API tokens, passwords, login rate limit
   deploy/        spec (sources, site options, secret_refs), runner (deploys, live output, pool, limits), history (the deploys table), deploy tokens, grants

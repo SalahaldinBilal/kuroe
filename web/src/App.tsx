@@ -20,6 +20,7 @@ import { Import } from "./pages/Import";
 import { Metrics } from "./pages/Metrics";
 import { NewDeployment } from "./pages/NewDeployment";
 import { ONBOARDING_DONE, Onboarding } from "./pages/Onboarding";
+import { Preview } from "./pages/Preview";
 import { ProxyPage } from "./pages/Proxy";
 import { Runners } from "./pages/Runners";
 import { Secrets } from "./pages/Secrets";
@@ -132,6 +133,7 @@ export function App() {
                 <Route path="/deployments" component={Deployments} />
                 <Route path="/deployments/new" component={NewDeployment} />
                 <Route path="/deployments/:id" component={Deployment} />
+                <Route path="/deployments/:id/preview" component={Preview} />
                 <Route path="/volumes" component={Volumes} />
                 <Route path="/metrics" component={Metrics} />
                 <Route path="/import" component={Import} />

@@ -23,6 +23,7 @@
 - A deployment's new Deploys tab lists its deploys: revision, result, who or what started it, the commit or image digest it deployed, when, and how long it took. The commit links to GitHub, GitLab or Gitea. Each deploy opens with its steps and full output. The last 50 are kept per deployment, which can be changed under Settings, Retention.
 - Secret values, saved secrets, Git tokens and registry passwords are masked in deploy output, and Git errors no longer quote the clone URL with its password.
 - A deploy that was running when kuroe stopped is marked failed on the next start, instead of leaving the deployment stuck as deploying.
+- A deployment has a Preview page for sending requests to its containers. Pick a container and one of its ports, or type any other port, then set the method, path, query, headers and a JSON, form or raw body. The answer shows its status, time, size and headers. Pages render without scripts or as source, JSON as a tree, images, video, audio and PDFs inline, text with colors and line numbers, and anything else as hex with a download. Redirects show as they are instead of being followed. Recent requests are kept in the browser tab. The port chips on the Containers card open this page, and "Open in a new tab" still browses through kuroe as before.
 
 ## [0.1.1] - 2026-11-02
 

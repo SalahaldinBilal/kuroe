@@ -49,6 +49,8 @@ pub use extract::CSRF_HEADER;
 const UPLOAD_LIMIT: usize = 1 << 30;
 /// A domain's options carry its error pages.
 const DOMAIN_LIMIT: usize = 8 << 20;
+/// A preview request's body arrives as base64, a third bigger than the bytes.
+const PREVIEW_REQUEST_LIMIT: usize = 24 << 20;
 pub const API_VERSION: u32 = 1;
 pub const API_BASE: &str = "/api/v1";
 
@@ -222,6 +224,7 @@ pub fn router(state: AppState) -> Router {
         .route("/deployment-volumes", get(volumes::of_deployments))
         .route("/volume-limits/{name}", put(volumes::set_limit).delete(volumes::remove_limit))
         .route("/deployments/{id}/volumes", get(volumes::of_deployment))
+        .route("/containers/{id}/request", post(preview::send).layer(DefaultBodyLimit::max(PREVIEW_REQUEST_LIMIT)))
         .route("/containers/{id}/logs", get(containers::logs))
         .route("/containers/{id}/exec", post(containers::create_exec))
         .route("/containers/{id}/attach", get(containers::attach))

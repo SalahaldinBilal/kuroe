@@ -30,11 +30,20 @@ export function commitUrl(source: DeploySource): string | null {
   return provider === "gitlab" ? `${base}/-/commit/${commit}` : `${base}/commit/${commit}`;
 }
 
+const KIND_TEXT: Record<string, string> = {
+  compose: "Compose file",
+  dockerfile: "Dockerfile",
+  upload: "Uploaded build context",
+  static: "Uploaded site",
+  git: "Git",
+  image: "Image",
+};
+
 export function sourceText(source: DeploySource): string {
   if (source.commit) return source.commit.slice(0, 7);
   if (source.image) return source.digest ? `${source.image}@${source.digest.slice(7, 19)}` : source.image;
   if (source.reference) return source.reference;
-  return source.kind;
+  return KIND_TEXT[source.kind] ?? source.kind;
 }
 
 export function triggerText(deploy: DeploySummary): string {
