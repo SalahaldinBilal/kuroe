@@ -12,22 +12,20 @@ function BuildStep(props: Props) {
   return (
     <>
       <Field label="Build step">
-        <div>
-          <SegmentedControl
-            label="Build step"
-            value={props.draft.build}
-            onChange={(build) =>
-              set({ build, output: build === "dockerfile" ? "/app/dist" : props.draft.output.replace(/^\//, "") })
-            }
-            options={
-              [
-                { value: "command", label: "Build command" },
-                { value: "dockerfile", label: "Dockerfile" },
-                { value: "none", label: "Files are ready" },
-              ] as const
-            }
-          />
-        </div>
+        <SegmentedControl
+          label="Build step"
+          value={props.draft.build}
+          onChange={(build) =>
+            set({ build, output: build === "dockerfile" ? "/app/dist" : props.draft.output.replace(/^\//, "") })
+          }
+          options={
+            [
+              { value: "command", label: "Build command" },
+              { value: "dockerfile", label: "Dockerfile" },
+              { value: "none", label: "Files are ready" },
+            ] as const
+          }
+        />
       </Field>
       <Switch>
         <Match when={props.draft.build === "command"}>

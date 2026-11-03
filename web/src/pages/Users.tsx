@@ -512,14 +512,12 @@ function RoleEditor(props: {
             when={scope() !== "granted"}
             fallback={<Note>Deployments they're granted. On every other deployment they can only view.</Note>}
           >
-            <div>
-              <SegmentedControl
-                label="Applies to"
-                value={scope() === "all" ? "all" : "some"}
-                options={SCOPE_OPTIONS}
-                onChange={(v) => !readOnly() && setScope(v === "all" ? "all" : selected())}
-              />
-            </div>
+            <SegmentedControl
+              label="Applies to"
+              value={scope() === "all" ? "all" : "some"}
+              options={SCOPE_OPTIONS}
+              onChange={(v) => !readOnly() && setScope(v === "all" ? "all" : selected())}
+            />
             <Show when={scope() !== "all"}>
               <div class="perm-grid boxed">
                 <For each={[...props.deployments]} fallback={<span class="hint">No deployments yet.</span>}>

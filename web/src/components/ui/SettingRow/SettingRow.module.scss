@@ -41,7 +41,7 @@
     }
 
     // A segmented control stretched to the row splits the width between its options.
-    > fieldset {
+    > [data-segmented] {
       display: flex;
 
       > * {

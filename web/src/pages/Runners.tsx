@@ -404,14 +404,12 @@ function PoolDialog(props: {
             />
           </Field>
           <Field label="Serves">
-            <div>
-              <SegmentedControl
-                label="Serves"
-                value={input().scope_kind}
-                onChange={(scope_kind) => set({ scope_kind })}
-                options={scopes().map((s) => ({ value: s, label: SCOPE_LABEL[input().provider][s] }))}
-              />
-            </div>
+            <SegmentedControl
+              label="Serves"
+              value={input().scope_kind}
+              onChange={(scope_kind) => set({ scope_kind })}
+              options={scopes().map((s) => ({ value: s, label: SCOPE_LABEL[input().provider][s] }))}
+            />
           </Field>
           <Show when={input().scope_kind !== "instance"}>
             <Field label={SCOPE_LABEL[input().provider][input().scope_kind]}>

@@ -1,6 +1,6 @@
 .Control {
   display: inline-flex;
-  align-items: center;
+  align-items: stretch;
   gap: 2px;
   box-sizing: border-box;
   width: fit-content;
@@ -30,7 +30,6 @@
   justify-content: center;
   gap: 6px;
   box-sizing: border-box;
-  height: 100%;
   padding: 0 12px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);

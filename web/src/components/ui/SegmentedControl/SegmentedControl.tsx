@@ -19,7 +19,14 @@ export type SegmentedControlProps<T> = {
 
 function SegmentedControl<T>(props: SegmentedControlProps<T>) {
   return (
-    <fieldset class={styles.Control} classList={{ [styles.Fill]: props.fill ?? false }} aria-label={props.label}>
+    // biome-ignore lint/a11y/useSemanticElements: a fieldset can't lay its options out as a flex row
+    <div
+      role="group"
+      data-segmented
+      class={styles.Control}
+      classList={{ [styles.Fill]: props.fill ?? false }}
+      aria-label={props.label}
+    >
       <For each={props.options}>
         {(option) => (
           <button
@@ -37,7 +44,7 @@ function SegmentedControl<T>(props: SegmentedControlProps<T>) {
           </button>
         )}
       </For>
-    </fieldset>
+    </div>
   );
 }
 

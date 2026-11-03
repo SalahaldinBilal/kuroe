@@ -93,17 +93,15 @@ export function AddCertificate(props: { onClose: () => void; onSaved: () => void
       }
     >
       <form id="add-certificate" class="stack" style={{ gap: "14px" }} onSubmit={save}>
-        <div>
-          <SegmentedControl
-            label="How"
-            value={way()}
-            onChange={setWay}
-            options={[
-              { value: "paste", label: "Paste a certificate" },
-              { value: "cloudflare", label: "Cloudflare origin certificate" },
-            ]}
-          />
-        </div>
+        <SegmentedControl
+          label="How"
+          value={way()}
+          onChange={setWay}
+          options={[
+            { value: "paste", label: "Paste a certificate" },
+            { value: "cloudflare", label: "Cloudflare origin certificate" },
+          ]}
+        />
         <Field label="Name" hint="Leave empty to name it after its first hostname.">
           <Input label="Name" placeholder="example.com" value={name()} onValue={setName} />
         </Field>

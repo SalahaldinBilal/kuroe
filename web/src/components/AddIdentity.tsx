@@ -126,17 +126,15 @@ export function AddIdentity(props: {
             </Field>
             <Switch>
               <Match when={p() === "github"}>
-                <div>
-                  <SegmentedControl
-                    label="GitHub method"
-                    value={method()}
-                    onChange={setMethod}
-                    options={[
-                      { value: "app", label: "GitHub App" },
-                      { value: "token", label: "Personal access token" },
-                    ]}
-                  />
-                </div>
+                <SegmentedControl
+                  label="GitHub method"
+                  value={method()}
+                  onChange={setMethod}
+                  options={[
+                    { value: "app", label: "GitHub App" },
+                    { value: "token", label: "Personal access token" },
+                  ]}
+                />
                 <Show
                   when={method() === "app"}
                   fallback={<SecretField hint={TOKEN_HINT.github} value={secret()} onValue={setSecret} />}

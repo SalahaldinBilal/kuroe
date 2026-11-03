@@ -395,17 +395,15 @@ export function NewDeployment() {
                 <div class="stack" style={{ gap: "14px" }}>
                   {repositoryFields()}
                   <Field label="Build with">
-                    <div>
-                      <SegmentedControl
-                        label="Build with"
-                        value={buildWith()}
-                        onChange={setBuildWith}
-                        options={[
-                          { value: "dockerfile" as const, label: "Dockerfile" },
-                          { value: "compose" as const, label: "Compose file" },
-                        ]}
-                      />
-                    </div>
+                    <SegmentedControl
+                      label="Build with"
+                      value={buildWith()}
+                      onChange={setBuildWith}
+                      options={[
+                        { value: "dockerfile" as const, label: "Dockerfile" },
+                        { value: "compose" as const, label: "Compose file" },
+                      ]}
+                    />
                   </Field>
                   <Show when={buildWith() === "compose"}>
                     <FieldRow>
@@ -451,18 +449,16 @@ export function NewDeployment() {
               <Match when={kind() === "static"}>
                 <div class="stack" style={{ gap: "14px" }}>
                   <Field label="Files come from">
-                    <div>
-                      <SegmentedControl
-                        label="Files come from"
-                        value={siteFrom()}
-                        onChange={pickSiteFrom}
-                        options={[
-                          { value: "git" as const, label: "Git repository" },
-                          { value: "image" as const, label: "Image" },
-                          { value: "upload" as const, label: "Upload" },
-                        ]}
-                      />
-                    </div>
+                    <SegmentedControl
+                      label="Files come from"
+                      value={siteFrom()}
+                      onChange={pickSiteFrom}
+                      options={[
+                        { value: "git" as const, label: "Git repository" },
+                        { value: "image" as const, label: "Image" },
+                        { value: "upload" as const, label: "Upload" },
+                      ]}
+                    />
                   </Field>
                   <Branch>
                     <Match when={siteFrom() === "git"}>
@@ -576,17 +572,15 @@ export function NewDeployment() {
               </Show>
               <Show when={ready(info)?.swarm_manager && !staticLike()}>
                 <Field label="Run as" hint="A Swarm stack gives rolling updates and replicas across nodes.">
-                  <div>
-                    <SegmentedControl
-                      label="Run as"
-                      value={mode()}
-                      onChange={setMode}
-                      options={[
-                        { value: "compose" as const, label: "Compose project" },
-                        { value: "stack" as const, label: "Swarm stack" },
-                      ]}
-                    />
-                  </div>
+                  <SegmentedControl
+                    label="Run as"
+                    value={mode()}
+                    onChange={setMode}
+                    options={[
+                      { value: "compose" as const, label: "Compose project" },
+                      { value: "stack" as const, label: "Swarm stack" },
+                    ]}
+                  />
                 </Field>
               </Show>
             </div>
