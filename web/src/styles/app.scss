@@ -94,6 +94,13 @@ textarea {
   &:hover {
     color: var(--ink);
   }
+
+  &.ext svg.i {
+    width: 12px;
+    height: 12px;
+    margin-left: 3px;
+    vertical-align: -1px;
+  }
 }
 
 svg.i {

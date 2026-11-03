@@ -58,7 +58,11 @@ export function Certificates(props: { draft: Draft; disabled: boolean; onChange:
           label="DNS identity"
           description={
             <>
-              A Cloudflare token from <A href="/identities">Identities</A>.
+              A Cloudflare token from{" "}
+              <A class="link" href="/identities">
+                Identities
+              </A>
+              .
             </>
           }
         >

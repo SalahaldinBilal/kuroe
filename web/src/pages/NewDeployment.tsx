@@ -37,7 +37,11 @@ type SiteFrom = "git" | "image" | "upload";
 function LoginsHint() {
   return (
     <>
-      Saved logins live under <A href="/identities">Identities</A>.
+      Saved logins live under{" "}
+      <A class="link" href="/identities">
+        Identities
+      </A>
+      .
     </>
   );
 }

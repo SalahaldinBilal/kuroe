@@ -384,7 +384,11 @@ function PoolDialog(props: {
             label="Identity"
             hint={
               <>
-                Registers the runners. Add one under <A href="/identities">Identities</A>.
+                Registers the runners. Add one under{" "}
+                <A class="link" href="/identities">
+                  Identities
+                </A>
+                .
                 {input().provider === "github"
                   ? " A GitHub App needs Self-hosted runners: write, a token Administration: write."
                   : ""}

@@ -1,7 +1,7 @@
 import { createSignal, Show } from "solid-js";
 import { api, type ProxyMode, type UiDomain } from "../api";
 import useToastState from "../states/toastState";
-import { Card, Note } from "./ui/Blocks";
+import { Card, ExtLink, Note } from "./ui/Blocks";
 import Button from "./ui/Button/Button";
 import { Icon } from "./ui/Icon";
 import Input from "./ui/Input/Input";
@@ -93,9 +93,9 @@ export function OwnDomain(props: Props) {
           {props.saved ? (
             <>
               kuroe answers at{" "}
-              <a class="mono" href={uiUrl(props.saved)} target="_blank" rel="noreferrer">
+              <ExtLink class="mono" href={uiUrl(props.saved)}>
                 {uiUrl(props.saved)}
-              </a>
+              </ExtLink>
             </>
           ) : (
             "The address you use now keeps working either way."

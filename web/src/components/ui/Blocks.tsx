@@ -64,6 +64,15 @@ export function Note(props: {
   );
 }
 
+export function ExtLink(props: { href: string; class?: string; children: JSX.Element }) {
+  return (
+    <a class={props.class ? `link ext ${props.class}` : "link ext"} href={props.href} target="_blank" rel="noreferrer">
+      {props.children}
+      <Icon name="ext" />
+    </a>
+  );
+}
+
 export function StatusBadge(props: { status: string }) {
   return (
     <span class={`badge s-${props.status}`}>

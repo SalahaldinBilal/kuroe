@@ -1,7 +1,7 @@
 import { createResource, createSignal, Match, onCleanup, Show, Switch } from "solid-js";
 import { api, type LatestRelease, type VersionInfo } from "../api";
 import { errorMessage } from "../states/toastState";
-import { Card, Note } from "./ui/Blocks";
+import { Card, ExtLink, Note } from "./ui/Blocks";
 import Button from "./ui/Button/Button";
 import Field from "./ui/Field/Field";
 import Input from "./ui/Input/Input";
@@ -136,10 +136,7 @@ export function SelfUpdate() {
                       </Show>
                     }
                   >
-                    kuroe {release().version} is out.{" "}
-                    <a href={release().url} target="_blank" rel="noreferrer">
-                      Release notes
-                    </a>
+                    kuroe {release().version} is out. <ExtLink href={release().url}>Release notes</ExtLink>
                   </Note>
                 </Show>
               )}
