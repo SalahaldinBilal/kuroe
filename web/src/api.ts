@@ -473,10 +473,27 @@ export interface RunnerPool extends RunnerInput {
   default_image: string;
 }
 
+export interface VolumeLimit {
+  max_bytes: number;
+  stop: boolean;
+}
+
+export interface VolumeInfo {
+  /** The Docker volume name. */
+  name: string;
+  shared: string | null;
+  deployments: { id: string; name: string }[];
+  bytes: number | null;
+  measured_at: number | null;
+  limit: VolumeLimit | null;
+  over: boolean;
+}
+
 export interface Volume {
   name: string;
   created_by: string | null;
   created_at: number;
+  usage: VolumeInfo | null;
 }
 
 export interface FileEntry {
@@ -826,6 +843,10 @@ export const api = {
   volumes: () => request<Volume[]>("GET", "/volumes"),
   createVolume: (name: string) => request<void>("POST", "/volumes", { name }),
   removeVolume: (name: string) => request<void>("DELETE", `/volumes/${enc(name)}`),
+  deploymentVolumes: () => request<VolumeInfo[]>("GET", "/deployment-volumes"),
+  volumesOf: (id: string) => request<VolumeInfo[]>("GET", `/deployments/${id}/volumes`),
+  setVolumeLimit: (name: string, limit: VolumeLimit) => request<void>("PUT", `/volume-limits/${enc(name)}`, limit),
+  removeVolumeLimit: (name: string) => request<void>("DELETE", `/volume-limits/${enc(name)}`),
 
   createExec: (container: string, cmd?: string[]) =>
     request<{ id: string }>("POST", `/containers/${container}/exec`, { cmd }),

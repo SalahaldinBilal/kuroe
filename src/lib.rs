@@ -15,4 +15,5 @@ pub mod secrets;
 pub mod sites;
 pub mod startup;
 pub mod update;
+pub mod volumes;
 pub mod web;

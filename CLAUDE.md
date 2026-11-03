@@ -28,6 +28,7 @@ src/
   git.rs         clones through gix
   sites.rs       static sites: the shared nginx container (kuroe_static), builds, revisions, routes
   saved_secrets.rs  named secrets deployments point at (the only code touching that table)
+  volumes.rs     volume sizes and soft limits, and the check that stops deployments over a limit
   secrets.rs     sealing at rest, fingerprints, key rotation
   bundle.rs      TOML export/import, including what an export leaves out
   db/            sqlx pool, migrations check, now(), helpers

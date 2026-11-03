@@ -88,7 +88,8 @@ mod tests {
             .unwrap()
     }
 
-    const TABLES_ADDED: [&[&str]; 1] = [&[
+    const TABLES_ADDED: [&[&str]; 2] = [
+        &[
         "api_tokens",
         "container_metrics",
         "deploy_tokens",
@@ -107,7 +108,9 @@ mod tests {
         "storage_metrics",
         "users",
         "volumes",
-    ]];
+        ],
+        &["volume_limits", "volume_sizes"],
+    ];
 
     fn tables_at(version: usize) -> Vec<String> {
         let mut tables: Vec<String> = TABLES_ADDED[..version].iter().flat_map(|t| t.iter().map(|s| s.to_string())).collect();

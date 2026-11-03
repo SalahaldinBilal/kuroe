@@ -4,12 +4,12 @@ pub mod retention;
 pub mod stats;
 pub mod storage;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
 use bollard::Docker;
-use bollard::query_parameters::{DataUsageOptions, ListContainersOptionsBuilder, StatsOptionsBuilder};
+use bollard::query_parameters::{DataUsageOptionsBuilder, ListContainersOptionsBuilder, StatsOptionsBuilder};
 use futures::StreamExt;
 use sqlx::SqlitePool;
 use tokio::task::JoinHandle;
@@ -125,11 +125,19 @@ impl Collector {
     }
 
     pub async fn record_storage(&self) -> anyhow::Result<Vec<storage::Usage>> {
-        let df = self.docker.df(None::<DataUsageOptions>).await?;
+        let df = self.docker.df(Some(DataUsageOptionsBuilder::new().verbose(true).build())).await?;
         let dir = self.data_dir.clone();
         let mut usage = tokio::task::spawn_blocking(move || storage::kuroe_usage(&dir)).await??;
         usage.extend(storage::docker_usage(&df));
-        storage::record(&self.db, now(), &usage).await?;
+        let ts = now();
+        storage::record(&self.db, ts, &usage).await?;
+        let shared: HashSet<String> = sqlx::query_scalar::<_, String>("SELECT name FROM volumes")
+            .fetch_all(&self.db)
+            .await?
+            .into_iter()
+            .map(|name| format!("kuroe_{name}"))
+            .collect();
+        storage::record_volumes(&self.db, ts, &storage::volume_sizes(&df, &shared)).await?;
         Ok(usage)
     }
 

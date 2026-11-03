@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 
 use bollard::models::SystemDataUsageResponse;
@@ -20,6 +21,48 @@ pub fn docker_usage(df: &SystemDataUsageResponse) -> Vec<Usage> {
         Usage { category: "docker_volumes", bytes: size(df.volume_usage.as_ref().and_then(|u| u.total_size)) },
         Usage { category: "docker_build_cache", bytes: size(df.build_cache_usage.as_ref().and_then(|u| u.total_size)) },
     ]
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VolumeSize {
+    pub name: String,
+    pub project: String,
+    pub bytes: u64,
+}
+
+const COMPOSE_PROJECT: &str = "com.docker.compose.project";
+const STACK_NAMESPACE: &str = "com.docker.stack.namespace";
+
+/// kuroe's volumes from a verbose `df`: the shared ones by name, and those of a kuroe Compose project or stack.
+/// Docker reports -1 for a size it couldn't measure, and those are left out.
+pub fn volume_sizes(df: &SystemDataUsageResponse, shared: &HashSet<String>) -> Vec<VolumeSize> {
+    let items = df.volume_usage.as_ref().and_then(|u| u.items.as_ref()).map(Vec::as_slice).unwrap_or_default();
+    items
+        .iter()
+        .filter_map(|v| {
+            let name = v["Name"].as_str()?.to_owned();
+            let labels = &v["Labels"];
+            let project = labels[COMPOSE_PROJECT].as_str().or_else(|| labels[STACK_NAMESPACE].as_str()).unwrap_or_default();
+            let ours = shared.contains(&name) || project.starts_with("kuroe_");
+            let bytes = u64::try_from(v["UsageData"]["Size"].as_i64()?).ok()?;
+            ours.then(|| VolumeSize { project: if shared.contains(&name) { String::new() } else { project.to_owned() }, name, bytes })
+        })
+        .collect()
+}
+
+pub async fn record_volumes(db: &SqlitePool, ts: i64, sizes: &[VolumeSize]) -> sqlx::Result<()> {
+    let mut tx = db.begin().await?;
+    sqlx::query("DELETE FROM volume_sizes").execute(&mut *tx).await?;
+    for size in sizes {
+        sqlx::query("INSERT INTO volume_sizes (name, project, bytes, measured_at) VALUES (?, ?, ?, ?)")
+            .bind(&size.name)
+            .bind(&size.project)
+            .bind(size.bytes as i64)
+            .bind(ts)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await
 }
 
 pub fn dir_size(path: &Path) -> std::io::Result<u64> {
@@ -83,6 +126,25 @@ mod tests {
         let usage = docker_usage(&df);
         assert_eq!(usage.iter().map(|u| u.bytes).collect::<Vec<_>>(), [1_500_000_000, 20_000_000, 300_000_000, 0]);
         assert_eq!(total(&usage), 1_820_000_000);
+    }
+
+    #[test]
+    fn volume_sizes_keep_kuroes_volumes_only() {
+        let df: SystemDataUsageResponse = serde_json::from_value(serde_json::json!({
+            "VolumeUsage": { "TotalSize": 0, "Items": [
+                { "Name": "kuroe_uploads", "Labels": null, "UsageData": { "Size": 2048, "RefCount": 1 } },
+                { "Name": "kuroe_shop_db", "Labels": { "com.docker.compose.project": "kuroe_shop" }, "UsageData": { "Size": 9000, "RefCount": 1 } },
+                { "Name": "kuroe_web_cache", "Labels": { "com.docker.stack.namespace": "kuroe_web" }, "UsageData": { "Size": 10, "RefCount": 0 } },
+                { "Name": "kuroe_cargo_registry", "Labels": null, "UsageData": { "Size": 500, "RefCount": 0 } },
+                { "Name": "other_db", "Labels": { "com.docker.compose.project": "other" }, "UsageData": { "Size": 7, "RefCount": 0 } },
+                { "Name": "kuroe_remote", "Labels": { "com.docker.compose.project": "kuroe_shop" }, "UsageData": { "Size": -1, "RefCount": 0 } }
+            ] }
+        }))
+        .unwrap();
+        let shared = HashSet::from(["kuroe_uploads".to_owned()]);
+        let sizes = volume_sizes(&df, &shared);
+        let got: Vec<(&str, &str, u64)> = sizes.iter().map(|s| (s.name.as_str(), s.project.as_str(), s.bytes)).collect();
+        assert_eq!(got, [("kuroe_uploads", "", 2048), ("kuroe_shop_db", "kuroe_shop", 9000), ("kuroe_web_cache", "kuroe_web", 10)]);
     }
 
     #[test]

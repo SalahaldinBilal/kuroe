@@ -1,7 +1,7 @@
 import { A } from "@solidjs/router";
 import { createResource, createSignal, For, Show } from "solid-js";
 import { useUser } from "../App";
-import { api, can, type Volume } from "../api";
+import { api, can, type Volume, type VolumeInfo } from "../api";
 import { Card, Note, PageHeader } from "../components/ui/Blocks";
 import Button from "../components/ui/Button/Button";
 import EmptyState from "../components/ui/EmptyState/EmptyState";
@@ -11,6 +11,7 @@ import Input from "../components/ui/Input/Input";
 import Modal from "../components/ui/Modal/Modal";
 import { ready } from "../components/ui/Overlay";
 import { Busy, SkeletonEmpty, SkeletonTable } from "../components/ui/Skeleton";
+import { LimitCell, LimitModal, SizeCell } from "../components/VolumeLimit";
 import { formatTime } from "../format";
 import { rowsFor, useShape } from "../shape";
 import useToastState from "../states/toastState";
@@ -19,8 +20,11 @@ export function Volumes() {
   const user = useUser();
   const { pushToast, pushError } = useToastState;
   const [volumes, { refetch }] = createResource(api.volumes);
+  const [own, { refetch: refetchOwn }] = createResource(api.deploymentVolumes);
   const known = useShape("volumes", 2, () => volumes.latest?.length);
   const [deployments] = createResource(api.deployments);
+  const [limiting, setLimiting] = createSignal<VolumeInfo | null>(null);
+  const canLimit = () => can(user(), "vol");
   const [creating, setCreating] = createSignal(false);
   const [name, setName] = createSignal("");
   const [deleting, setDeleting] = createSignal<Volume | null>(null);
@@ -73,7 +77,7 @@ export function Volumes() {
     <div class="content">
       <PageHeader
         title="Volumes"
-        description="Named volumes you can mount into any service of any deployment"
+        description="Named volumes you can mount into any service of any deployment. Sizes are measured every 10 minutes."
         actions={newButton(false)}
       />
       <Show when={volumes.error}>
@@ -88,7 +92,7 @@ export function Volumes() {
               fallback={
                 <Busy>
                   <Show when={known > 0} fallback={<SkeletonEmpty action={canCreate()} />}>
-                    <SkeletonTable bare rows={rowsFor(known)} columns={5} />
+                    <SkeletonTable bare rows={rowsFor(known)} columns={7} />
                   </Show>
                 </Busy>
               }
@@ -108,6 +112,8 @@ export function Volumes() {
                 <th>Name</th>
                 <th class="hide-sm">Docker name</th>
                 <th>Mounted by</th>
+                <th>Size</th>
+                <th class="hide-sm">Limit</th>
                 <th class="hide-sm">Created</th>
                 <th />
               </tr>
@@ -138,8 +144,27 @@ export function Volumes() {
                         </span>
                       </Show>
                     </td>
+                    <td>
+                      <SizeCell volume={v.usage} />
+                    </td>
+                    <td class="hide-sm">
+                      <LimitCell volume={v.usage} />
+                    </td>
                     <td class="hide-sm mono muted">{formatTime(v.created_at)}</td>
                     <td class="acts">
+                      <Show when={canLimit() && v.usage}>
+                        {(usage) => (
+                          <Button
+                            variant="ghost"
+                            icon
+                            size="sm"
+                            tooltip="Set a limit"
+                            onClick={() => setLimiting(usage())}
+                          >
+                            <Icon name="sliders" />
+                          </Button>
+                        )}
+                      </Show>
                       <Show when={canDelete()}>
                         <Button variant="ghost" icon size="sm" tooltip="Delete" onClick={() => setDeleting(v)}>
                           <Icon name="trash" />
@@ -153,6 +178,69 @@ export function Volumes() {
           </table>
         </Show>
       </Card>
+
+      <Show when={(ready(own) ?? []).length > 0}>
+        <Card title="Deployment volumes" description="Named volumes from a deployment's own Compose file">
+          <table class="tbl">
+            <thead>
+              <tr>
+                <th>Volume</th>
+                <th>Deployment</th>
+                <th>Size</th>
+                <th class="hide-sm">Limit</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              <For each={ready(own)}>
+                {(v) => (
+                  <tr>
+                    <td>
+                      <span class="hrow">
+                        <Icon name="db" />
+                        <span class="mono">{v.name}</span>
+                      </span>
+                    </td>
+                    <td>
+                      <span class="hrow wrap" style={{ gap: "4px" }}>
+                        <For each={v.deployments}>
+                          {(d) => (
+                            <A class="chip" href={`/deployments/${d.id}`}>
+                              {d.name}
+                            </A>
+                          )}
+                        </For>
+                      </span>
+                    </td>
+                    <td>
+                      <SizeCell volume={v} />
+                    </td>
+                    <td class="hide-sm">
+                      <LimitCell volume={v} />
+                    </td>
+                    <td class="acts">
+                      <Show when={canLimit()}>
+                        <Button variant="ghost" icon size="sm" tooltip="Set a limit" onClick={() => setLimiting(v)}>
+                          <Icon name="sliders" />
+                        </Button>
+                      </Show>
+                    </td>
+                  </tr>
+                )}
+              </For>
+            </tbody>
+          </table>
+        </Card>
+      </Show>
+
+      <LimitModal
+        volume={limiting()}
+        onHide={() => setLimiting(null)}
+        onSaved={() => {
+          refetch();
+          refetchOwn();
+        }}
+      />
 
       <Modal
         show={creating()}

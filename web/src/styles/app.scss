@@ -287,6 +287,10 @@ svg.i {
   margin: 0 auto;
   padding: 28px 32px 72px;
 
+  > .card + .card {
+    margin-top: 16px;
+  }
+
   &.narrow {
     max-width: 780px;
   }

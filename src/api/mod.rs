@@ -113,6 +113,7 @@ impl AppState {
         self.runners.clone().spawn();
         crate::docker::netlimit::spawn_watcher(self.docker.clone());
         crate::events::spawn_docker_watcher(self.docker.clone());
+        crate::volumes::spawn_enforcer(self.db.clone(), self.runner.clone());
     }
 }
 
@@ -213,6 +214,9 @@ pub fn router(state: AppState) -> Router {
         .route("/runners/{id}/clear-cache", post(runners::clear_cache))
         .route("/volumes", get(volumes::list).post(volumes::create))
         .route("/volumes/{name}", axum::routing::delete(volumes::remove))
+        .route("/deployment-volumes", get(volumes::of_deployments))
+        .route("/volume-limits/{name}", put(volumes::set_limit).delete(volumes::remove_limit))
+        .route("/deployments/{id}/volumes", get(volumes::of_deployment))
         .route("/containers/{id}/logs", get(containers::logs))
         .route("/containers/{id}/exec", post(containers::create_exec))
         .route("/containers/{id}/attach", get(containers::attach))

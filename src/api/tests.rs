@@ -234,6 +234,61 @@ async fn call_tool(app: &Router, token: &str, name: &str, arguments: Value) -> (
 }
 
 #[tokio::test]
+async fn volume_limits_show_who_is_over_and_need_the_permission() {
+    use crate::deploy::{self, Source, Spec};
+    use crate::docker::rewrite::{ServiceSettings, SharedMount};
+    let (app, state) = app().await;
+    let owner = auth::create_user(&state.db, "boss", "boss-password-1", Role::owner()).await.unwrap();
+    let boss = auth::create_session(&state.db, &owner.id).await.unwrap();
+    let mut spec = Spec::new(Source::image("nginx:1.29"));
+    let mount = SharedMount { volume: "uploads".into(), target: "/data".into(), read_only: false };
+    spec.services.insert("app".into(), ServiceSettings { volumes: vec![mount], ..Default::default() });
+    let shop = deploy::create(&state.db, "shop", &spec, &owner).await.unwrap();
+    sqlx::query("INSERT INTO volumes (name, created_at) VALUES ('uploads', 0)").execute(&state.db).await.unwrap();
+    for (name, project, bytes) in [("kuroe_uploads", "", 3 << 20), ("kuroe_shop_db", "kuroe_shop", 1 << 20)] {
+        sqlx::query("INSERT INTO volume_sizes (name, project, bytes, measured_at) VALUES (?, ?, ?, 100)")
+            .bind(name)
+            .bind(project)
+            .bind(bytes)
+            .execute(&state.db)
+            .await
+            .unwrap();
+    }
+    let viewer = auth::create_user(&state.db, "look", "look-password-1", Role::viewer()).await.unwrap();
+    let look = auth::create_session(&state.db, &viewer.id).await.unwrap();
+
+    let limit = json!({ "max_bytes": 2 << 20, "stop": true });
+    let (status, _, _) = send(&app, request(Method::PUT, "/api/v1/volume-limits/kuroe_uploads", Some(&look), Some(limit.clone()))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _, _) = send(&app, request(Method::PUT, "/api/v1/volume-limits/kuroe_nothing", Some(&boss), Some(limit.clone()))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let zero = json!({ "max_bytes": 0, "stop": false });
+    let (status, _, _) = send(&app, request(Method::PUT, "/api/v1/volume-limits/kuroe_uploads", Some(&boss), Some(zero))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _, _) = send(&app, request(Method::PUT, "/api/v1/volume-limits/kuroe_uploads", Some(&boss), Some(limit))).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (_, _, body) = send(&app, request(Method::GET, "/api/v1/volumes", Some(&look), None)).await;
+    let usage = &body[0]["usage"];
+    assert_eq!((usage["bytes"].as_i64(), usage["over"].as_bool()), (Some(3 << 20), Some(true)), "{body}");
+    assert_eq!(usage["limit"], json!({ "max_bytes": 2 << 20, "stop": true }));
+    assert_eq!(usage["deployments"][0]["name"], "shop");
+
+    let (_, _, body) = send(&app, request(Method::GET, "/api/v1/deployment-volumes", Some(&look), None)).await;
+    assert_eq!(body.as_array().unwrap().len(), 1, "{body}");
+    assert_eq!(body[0]["name"], "kuroe_shop_db");
+
+    let (_, _, body) = send(&app, request(Method::GET, &format!("/api/v1/deployments/{}/volumes", shop.id), Some(&look), None)).await;
+    let names: Vec<&str> = body.as_array().unwrap().iter().map(|v| v["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["kuroe_uploads", "kuroe_shop_db"]);
+
+    let (status, _, _) = send(&app, request(Method::DELETE, "/api/v1/volume-limits/kuroe_uploads", Some(&boss), None)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, _, body) = send(&app, request(Method::GET, "/api/v1/volumes", Some(&look), None)).await;
+    assert_eq!((body[0]["usage"]["limit"].is_null(), body[0]["usage"]["over"].as_bool()), (true, Some(false)));
+}
+
+#[tokio::test]
 async fn metrics_by_deployment_only_show_what_the_user_can_see() {
     use crate::deploy::{self, Source, Spec};
     let (app, state) = app().await;

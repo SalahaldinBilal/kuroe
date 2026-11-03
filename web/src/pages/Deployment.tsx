@@ -25,7 +25,8 @@ import SegmentedControl from "../components/ui/SegmentedControl/SegmentedControl
 import { Bone, Busy, SkeletonCardHead } from "../components/ui/Skeleton";
 import Tabs from "../components/ui/Tabs/Tabs";
 import Tip from "../components/ui/Tooltip/Tip";
-import { formatAgo, formatTime } from "../format";
+import { LimitCell, SizeCell, volumeLabel } from "../components/VolumeLimit";
+import { formatAgo, formatBytes, formatTime } from "../format";
 import { isStatic, sourceLabel } from "../spec";
 import useContextMenuState, { type MenuItem } from "../states/contextMenuState";
 import { eventsConnected, onEvent } from "../states/eventState";
@@ -401,6 +402,8 @@ interface OverviewProps {
 function Overview(props: OverviewProps) {
   const d = () => props.detail;
   const stopped = () => d().containers.filter((c) => c.state !== "running");
+  const [volumes] = createResource(() => d().id, api.volumesOf);
+  const over = () => (ready(volumes) ?? []).filter((v) => v.over);
   const tail = () => d().last_output.trimEnd().split("\n").slice(-OUTPUT_TAIL).join("\n");
   let output: HTMLDetailsElement | undefined;
 
@@ -463,6 +466,19 @@ function Overview(props: OverviewProps) {
           </Note>
         </Match>
       </Switch>
+
+      <For each={over()}>
+        {(v) => (
+          <Note tone={v.limit?.stop ? "bad" : "warn"}>
+            <b>
+              {volumeLabel(v)} is over its limit, {formatBytes(v.bytes ?? 0)} of {formatBytes(v.limit?.max_bytes ?? 0)}.
+            </b>{" "}
+            {v.limit?.stop
+              ? "kuroe stops this deployment while it's over. Free up space or raise the limit on the Volumes page."
+              : "Free up space or raise the limit on the Volumes page."}
+          </Note>
+        )}
+      </For>
 
       <Card title="Containers" actions={<span class="count">{d().containers.length}</span>}>
         <Show
@@ -536,6 +552,43 @@ function Overview(props: OverviewProps) {
           </For>
         </Show>
       </Card>
+
+      <Show when={(ready(volumes) ?? []).length > 0}>
+        <Card title="Volumes" description="Measured every 10 minutes">
+          <table class="tbl">
+            <thead>
+              <tr>
+                <th>Volume</th>
+                <th>Size</th>
+                <th>Limit</th>
+              </tr>
+            </thead>
+            <tbody>
+              <For each={ready(volumes)}>
+                {(v) => (
+                  <tr>
+                    <td>
+                      <span class="hrow">
+                        <Icon name={v.shared ? "drive" : "db"} />
+                        <span class="mono">{volumeLabel(v)}</span>
+                        <Show when={v.shared}>
+                          <span class="faint">shared</span>
+                        </Show>
+                      </span>
+                    </td>
+                    <td>
+                      <SizeCell volume={v} />
+                    </td>
+                    <td>
+                      <LimitCell volume={v} />
+                    </td>
+                  </tr>
+                )}
+              </For>
+            </tbody>
+          </table>
+        </Card>
+      </Show>
 
       <Show when={d().last_output && d().status !== "deploying"}>
         <details class="card out" ref={output} open={d().status === "failed"}>
