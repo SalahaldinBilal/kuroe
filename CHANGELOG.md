@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Live updates, logs, shells and deploy output work again when plain HTTP is set to local only. Traefik marks websockets over HTTPS as `wss`, which kuroe refused as plain HTTP.
+
 ## [0.1.1] - 2026-11-02
 
 - The web server settings on the Proxy page are clearer. Who keeps the HTTPS certificates is a plain choice, and the certificate paths say that kuroe doesn't create those files.

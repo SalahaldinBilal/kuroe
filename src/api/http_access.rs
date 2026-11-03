@@ -94,8 +94,12 @@ pub fn allowed(peer: IpAddr, forwarded_https: bool, peers: &Peers) -> bool {
     forwarded_https && peers.proxy_nets.iter().chain(&peers.trusted).any(|n| n.contains(peer))
 }
 
+/// Traefik sends `wss` instead of `https` for websocket upgrades over TLS.
 pub fn forwarded_https(headers: &HeaderMap) -> bool {
-    headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok()).is_some_and(|v| v.eq_ignore_ascii_case("https"))
+    headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.eq_ignore_ascii_case("https") || v.eq_ignore_ascii_case("wss"))
 }
 
 pub struct Settings {
@@ -257,6 +261,21 @@ mod tests {
         assert_eq!(HttpAccess::parse("local"), Some(HttpAccess::Local));
         assert_eq!(HttpAccess::parse("closed"), None);
         assert!(refusal(Some("https://kuroe.example.com")).contains("Use https://kuroe.example.com"));
+    }
+
+    #[test]
+    fn forwarded_https_takes_websockets_over_tls() {
+        let proto = |value: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert("x-forwarded-proto", value.parse().unwrap());
+            forwarded_https(&headers)
+        };
+        assert!(proto("https"));
+        assert!(proto("HTTPS"));
+        assert!(proto("wss"));
+        assert!(!proto("http"));
+        assert!(!proto("ws"));
+        assert!(!forwarded_https(&HeaderMap::new()));
     }
 
     #[tokio::test]

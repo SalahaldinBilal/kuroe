@@ -151,7 +151,7 @@ export function NewDeployment() {
     setBusy(true);
     try {
       const single = !composeLike();
-      const { env: envMap, secrets, refs } = single ? rowsToEnv(env()) : { env: {}, secrets: [], refs: {} };
+      const { env: envMap, secrets, refs } = rowsToEnv(env());
       const token = usesGit() && pastesToken() ? tokenRef() : null;
       const spec = {
         source: source(),

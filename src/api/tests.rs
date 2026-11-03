@@ -998,6 +998,15 @@ async fn local_can_only_be_turned_on_from_where_it_still_answers() {
     req.headers_mut().insert("x-forwarded-proto", "https".parse().unwrap());
     let (status, _, _) = send(&public, req).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "through a trusted HTTPS proxy");
+
+    let mut socket = request(Method::GET, "/api/v1/me", Some(&token), None);
+    socket.headers_mut().insert("x-forwarded-proto", "wss".parse().unwrap());
+    let (status, _, _) = send(&public, socket).await;
+    assert_eq!(status, StatusCode::OK, "websockets through the same proxy say wss");
+    let mut plain = request(Method::GET, "/api/v1/me", Some(&token), None);
+    plain.headers_mut().insert("x-forwarded-proto", "ws".parse().unwrap());
+    let (status, _, _) = send(&public, plain).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "plain websockets are still refused");
 }
 
 #[tokio::test]
