@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-06
+
 - Build output keeps the colors the build tools print. Docker's classic builder painted everything written to stderr bright red, so normal progress like cargo's "Updating crates.io index" looked like errors.
 - Logs keep being saved after a container restarts. Before, a restart could stop kuroe from saving that container's logs until kuroe itself restarted.
 - Saved logs of the current day add new lines at the end instead of reloading everything when a container starts or stops.
