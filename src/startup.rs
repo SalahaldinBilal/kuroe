@@ -74,7 +74,7 @@ mod tests {
     #[tokio::test]
     async fn a_failed_start_still_answers_with_the_reason() {
         let app = failed("the database was migrated by a newer kuroe".into());
-        for uri in ["/api/v1/setup", "/api/v1/deployments/x/metrics?from=1&to=2"] {
+        for uri in ["/api/v1/setup", "/api/v1/health", "/api/v1/deployments/x/metrics?from=1&to=2"] {
             let res = app.clone().oneshot(Request::get(uri).body(Body::empty()).unwrap()).await.unwrap();
             assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE, "{uri}");
             let body: serde_json::Value = serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();

@@ -122,6 +122,7 @@ impl AppState {
 
 pub fn router(state: AppState) -> Router {
     let api = Router::new()
+        .route("/health", get(|| async { "ok" }))
         .route("/setup", get(handlers::setup_status).post(handlers::setup))
         .route("/login", post(handlers::login))
         .route("/logout", post(handlers::logout))

@@ -173,7 +173,7 @@ async fn healthy(docker: &Docker, http: &reqwest::Client, container: &str, port:
             .filter_map(|(_, e)| e.ip_address.filter(|ip| !ip.is_empty()))
             .collect();
         for ip in ips {
-            if let Ok(res) = http.get(format!("http://{ip}:{port}{}/setup", crate::api::API_BASE)).send().await
+            if let Ok(res) = http.get(format!("http://{ip}:{port}{}/health", crate::api::API_BASE)).send().await
                 && res.status().is_success()
             {
                 return Ok(());

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Updating no longer rolls back on servers with HTTP access set to "local". The new version started fine, but its check came over plain HTTP from the updater container and got refused, so the update timed out after 30 seconds. The check now uses `/api/v1/health`. With "local", that route also answers plain HTTP sent straight from a container on the same host, and nothing else from outside.
+
 ## [0.2.1] - 2026-11-06
 
 - Build output keeps the colors the build tools print. Docker's classic builder painted everything written to stderr bright red, so normal progress like cargo's "Updating crates.io index" looked like errors.

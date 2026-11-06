@@ -1157,6 +1157,8 @@ async fn local_http_access_only_answers_this_machine() {
     assert_eq!(public.clone().oneshot(forged).await.unwrap().status(), StatusCode::FORBIDDEN, "a forged header from outside");
     let (status, _, _) = send(&public, request(Method::GET, "/preview/c1/80/", None, None)).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "previews keep their own session check");
+    let (status, _, _) = send(&public, request(Method::GET, "/api/v1/health", None, None)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "the health check stays on this machine");
 
     let (status, cookie) = login(&local, "boss", "boss-password-1").await;
     assert_eq!(status, StatusCode::OK, "loopback always gets through");

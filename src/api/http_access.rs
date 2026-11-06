@@ -9,6 +9,7 @@ use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use bollard::query_parameters::ListNetworksOptions;
 use sqlx::SqlitePool;
 
 use super::AppState;
@@ -84,6 +85,8 @@ pub struct Peers {
     pub proxy_nets: Vec<Net>,
     /// Addresses from the `trusted_proxies` setting.
     pub trusted: Vec<Net>,
+    /// This host's Docker bridge networks. Empty on the binary install.
+    pub bridge_nets: Vec<Net>,
 }
 
 pub fn allowed(peer: IpAddr, forwarded_https: bool, peers: &Peers) -> bool {
@@ -92,6 +95,12 @@ pub fn allowed(peer: IpAddr, forwarded_https: bool, peers: &Peers) -> bool {
         return true;
     }
     forwarded_https && peers.proxy_nets.iter().chain(&peers.trusted).any(|n| n.contains(peer))
+}
+
+/// A plain HTTP request a container on this host sent straight to kuroe, not one a proxy passed on.
+pub fn from_this_machine(peer: IpAddr, headers: &HeaderMap, peers: &Peers) -> bool {
+    let proxied = ["x-forwarded-for", "forwarded", "x-real-ip"].iter().any(|h| headers.contains_key(*h));
+    !proxied && peers.bridge_nets.iter().any(|n| n.contains(peer))
 }
 
 /// Traefik sends `wss` instead of `https` for websocket upgrades over TLS.
@@ -178,7 +187,19 @@ pub async fn peers(state: &AppState, trusted: Vec<Net>) -> Peers {
                     .collect(),
                 Err(_) => Vec::new(),
             };
-            let p = Peers { host_gateway, proxy_nets, trusted: Vec::new() };
+            let bridge_nets = match in_container {
+                true => match state.docker.list_networks(None::<ListNetworksOptions>).await {
+                    Ok(list) => list
+                        .into_iter()
+                        .filter(|n| n.driver.as_deref() == Some("bridge"))
+                        .flat_map(|n| n.ipam.and_then(|i| i.config).unwrap_or_default())
+                        .filter_map(|c| c.subnet.as_deref().and_then(Net::parse))
+                        .collect(),
+                    Err(_) => Vec::new(),
+                },
+                false => Vec::new(),
+            };
+            let p = Peers { host_gateway, proxy_nets, trusted: Vec::new(), bridge_nets };
             *state.http_access.peers.lock().unwrap() = Some((Instant::now(), p.clone()));
             p
         }
@@ -209,7 +230,13 @@ pub async fn gate(State(state): State<AppState>, ConnectInfo(peer): ConnectInfo<
     if settings.access == HttpAccess::Open {
         return next.run(request).await;
     }
-    if request_allowed(&state, Some(peer), request.headers(), settings.trusted).await {
+    if request_allowed(&state, Some(peer), request.headers(), settings.trusted.clone()).await {
+        return next.run(request).await;
+    }
+    // The self-update check comes over plain HTTP from the updater container.
+    if request.uri().path().strip_prefix(super::API_BASE) == Some("/health")
+        && from_this_machine(peer.ip(), request.headers(), &peers(&state, settings.trusted).await)
+    {
         return next.run(request).await;
     }
     (StatusCode::FORBIDDEN, [(header::CONTENT_TYPE, "text/plain; charset=utf-8")], refusal(settings.public_url.as_deref())).into_response()
@@ -229,6 +256,7 @@ mod tests {
             host_gateway: Some(ip("172.17.0.1")),
             proxy_nets: vec![Net::parse("172.20.0.0/16").unwrap()],
             trusted: parse_list("10.1.2.3, fd00::/8"),
+            bridge_nets: Vec::new(),
         };
         let cases = [
             ("127.0.0.1", false, true, "loopback"),
@@ -247,6 +275,17 @@ mod tests {
             assert_eq!(allowed(ip(peer), https, &peers), expected, "{what}");
         }
         assert!(!allowed(ip("172.17.0.1"), false, &Peers::default()), "the gateway only counts inside a container");
+    }
+
+    #[test]
+    fn only_a_container_on_this_host_reaches_health_over_plain_http() {
+        let peers = Peers { bridge_nets: parse_list("172.18.0.0/16"), ..Default::default() };
+        let mut traefik = HeaderMap::new();
+        traefik.insert("x-forwarded-for", "203.0.113.9".parse().unwrap());
+        assert!(from_this_machine(ip("172.18.0.7"), &HeaderMap::new(), &peers), "the updater container");
+        assert!(!from_this_machine(ip("172.18.0.3"), &traefik, &peers), "a public request Traefik passed on over plain HTTP");
+        assert!(!from_this_machine(ip("203.0.113.9"), &HeaderMap::new(), &peers), "a public address");
+        assert!(!from_this_machine(ip("172.18.0.7"), &HeaderMap::new(), &Peers::default()), "the binary install has no bridge networks");
     }
 
     #[test]
