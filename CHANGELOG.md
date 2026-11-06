@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Build output keeps the colors the build tools print. Docker's classic builder painted everything written to stderr bright red, so normal progress like cargo's "Updating crates.io index" looked like errors.
+- Logs keep being saved after a container restarts. Before, a restart could stop kuroe from saving that container's logs until kuroe itself restarted.
+- Saved logs of the current day add new lines at the end instead of reloading everything when a container starts or stops.
+- Saved logs show only each line's message. The time sits in a column on the left, with the full time, stream and container on hover. Deployments with more than one container also show which container wrote each line. Switches above the log turn the time, stream and container columns on or off, and the browser remembers the choice.
+- Each step of a deploy opens to show the output it wrote, for a running deploy and for finished ones. Deploys from before this version only show their full output.
+
 ## [0.2.0] - 2026-11-03
 
 - Live updates, logs, shells and deploy output work again when plain HTTP is set to local only. Traefik marks websockets over HTTPS as `wss`, which kuroe refused as plain HTTP.

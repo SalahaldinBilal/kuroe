@@ -64,23 +64,39 @@ impl Collector {
             tasks.retain(|_, t| !(t.stats.is_finished() && t.logs.is_finished()));
             for container in running {
                 let (Some(id), Some(labels)) = (container.id, container.labels) else { continue };
-                if tasks.contains_key(&id) {
-                    continue;
-                }
                 let deployment = labels.get(LABEL_DEPLOYMENT).cloned().unwrap_or_default();
                 let service = labels.get(LABEL_SERVICE).cloned().unwrap_or_else(|| "app".into());
-                let stats = tokio::spawn(self.clone().stats_task(deployment.clone(), service.clone(), id.clone()));
-                let logs_task = {
-                    let (db, docker, dir, id) = (self.db.clone(), self.docker.clone(), self.logs_dir(), id.clone());
-                    tokio::spawn(async move {
-                        if let Err(err) = logs::follow(db, docker, dir, deployment, service, id.clone()).await {
-                            tracing::warn!("log follower for {id} stopped: {err:#}");
+                // A restart ends the log stream while the stats task may keep going, so each is restarted on its own.
+                match tasks.get_mut(&id) {
+                    Some(t) => {
+                        if t.stats.is_finished() {
+                            t.stats = self.spawn_stats(&deployment, &service, &id);
                         }
-                    })
-                };
-                tasks.insert(id, Tasks { stats, logs: logs_task });
+                        if t.logs.is_finished() {
+                            t.logs = self.spawn_logs(&deployment, &service, &id);
+                        }
+                    }
+                    None => {
+                        let fresh = Tasks { stats: self.spawn_stats(&deployment, &service, &id), logs: self.spawn_logs(&deployment, &service, &id) };
+                        tasks.insert(id, fresh);
+                    }
+                }
             }
         }
+    }
+
+    fn spawn_stats(&self, deployment: &str, service: &str, id: &str) -> JoinHandle<()> {
+        tokio::spawn(self.clone().stats_task(deployment.to_owned(), service.to_owned(), id.to_owned()))
+    }
+
+    fn spawn_logs(&self, deployment: &str, service: &str, id: &str) -> JoinHandle<()> {
+        let (db, docker, dir) = (self.db.clone(), self.docker.clone(), self.logs_dir());
+        let (deployment, service, id) = (deployment.to_owned(), service.to_owned(), id.to_owned());
+        tokio::spawn(async move {
+            if let Err(err) = logs::follow(db, docker, dir, deployment, service, id.clone()).await {
+                tracing::warn!("log follower for {id} stopped: {err:#}");
+            }
+        })
     }
 
     async fn stats_task(self, deployment: String, service: String, id: String) {

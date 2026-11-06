@@ -56,6 +56,14 @@ export function stepSeconds(step: DeployStep, nowMs: number): number {
   return ((step.finished_ms ?? nowMs) - step.started_ms) / 1000;
 }
 
+/** The output lines written while step `index` ran. */
+export function stepLines(steps: DeployStep[], index: number, lines: string[]): string[] {
+  const start = steps[index]?.first_line;
+  if (start == null) return [];
+  const next = steps.slice(index + 1).find((s) => s.first_line != null)?.first_line;
+  return lines.slice(start, next ?? lines.length);
+}
+
 export function deploySeconds(deploy: DeploySummary, nowSeconds: number): number {
   return (deploy.finished_at ?? nowSeconds) - deploy.started_at;
 }

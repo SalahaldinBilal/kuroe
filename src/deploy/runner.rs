@@ -183,7 +183,11 @@ impl LiveDeploy {
 
     fn step(&self, step: Step, detail: Option<String>) {
         let event_detail = detail.clone();
-        self.change_steps(|steps| history::start_step(steps, step, detail, history::now_ms()));
+        let first_line = self.state.lock().unwrap().lines.len();
+        self.change_steps(|steps| {
+            history::start_step(steps, step, detail, history::now_ms());
+            history::mark_first_line(steps, first_line);
+        });
         crate::events::send(crate::events::Event::DeployStep { id: self.deployment.clone(), step, detail: event_detail });
     }
 
@@ -384,6 +388,11 @@ impl Lines {
     }
 }
 
+/// Docker's classic builder wraps each stderr chunk in bright red, but most tools write plain progress there.
+fn without_stderr_paint(chunk: &str) -> &str {
+    chunk.strip_prefix("\u{1b}[91m").and_then(|rest| rest.strip_suffix("\u{1b}[0m")).unwrap_or(chunk)
+}
+
 /// Drops escape sequences: CSI like `ESC[31m`, OSC like window titles, and two-character escapes.
 fn strip_ansi(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -447,13 +456,16 @@ impl Log {
         text
     }
 
+    /// Text with newlines becomes several lines, so step marks count the same lines the output shows.
     fn line(&mut self, text: impl Into<String>) {
         let text = self.masked(text.into());
-        tracing::debug!("{text}");
-        if let Some(live) = &self.live {
-            live.line(&text);
+        for line in text.split('\n') {
+            tracing::debug!("{line}");
+            if let Some(live) = &self.live {
+                live.line(line);
+            }
+            self.lines.push(line.to_owned());
         }
-        self.lines.push(text);
     }
 
     fn partial(&self, text: Option<String>) {
@@ -1510,7 +1522,7 @@ impl Runner {
         while let Some(item) = stream.next().await {
             let info = item?;
             if let Some(text) = info.stream {
-                for line in lines.push(&text) {
+                for line in lines.push(without_stderr_paint(&text)) {
                     log.line(line);
                 }
                 log.partial(lines.pending());
@@ -1865,6 +1877,56 @@ mod tests {
         let mut out = lines.push("Step 1/3 : FROM alpine\n\n   \nfetch 10%\rfetch 55%\rfetch 100%\r\nno newline at the end");
         out.extend(lines.finish());
         assert_eq!(out, ["Step 1/3 : FROM alpine", "fetch 100%", "no newline at the end"]);
+    }
+
+    #[test]
+    fn build_stderr_shows_the_tools_own_colors_not_dockers_red() {
+        let mut lines = Lines::default();
+        let mut out = Vec::new();
+        for chunk in [
+            "Step 5/10 : RUN cargo build --release --locked\n",
+            "\u{1b}[91m    Updating crates.io index\n\u{1b}[0m",
+            "\u{1b}[91m\u{1b}[1m\u{1b}[32m  Downloaded\u{1b}[0m itoa v1.0.18\n\u{1b}[0m",
+            "\u{1b}[91mERROR\u{1b}[0m: tests failed\n",
+        ] {
+            out.extend(lines.push(without_stderr_paint(chunk)));
+        }
+        out.extend(lines.finish());
+        assert_eq!(
+            out,
+            [
+                "Step 5/10 : RUN cargo build --release --locked",
+                "    Updating crates.io index",
+                "\u{1b}[1m\u{1b}[32m  Downloaded\u{1b}[0m itoa v1.0.18",
+                "\u{1b}[91mERROR\u{1b}[0m: tests failed",
+            ]
+        );
+    }
+
+    #[test]
+    fn each_step_opens_to_exactly_its_own_output() {
+        let deploys = LiveDeploys::default();
+        let in_flight = deploys.start("dep").unwrap();
+        let mut log = Log::live(in_flight.live.clone(), DeploySource::default());
+        log.line("deploying revision 3");
+        log.step(Step::Cloning, None);
+        log.line("cloning https://github.com/acme/api.git");
+        log.line("cloning failed:\nauthentication required\nis the token still valid?");
+        log.step(Step::CleaningUp, None);
+        log.line("removed the half-built project");
+
+        let output = log.text();
+        let lines: Vec<&str> = output.split('\n').collect();
+        let steps = in_flight.live.state.lock().unwrap().steps.clone();
+        let of = |i: usize| {
+            let end = steps.get(i + 1).and_then(|s| s.first_line).unwrap_or(lines.len());
+            lines[steps[i].first_line.unwrap()..end].to_vec()
+        };
+        assert_eq!(
+            of(0),
+            ["cloning https://github.com/acme/api.git", "cloning failed:", "authentication required", "is the token still valid?"]
+        );
+        assert_eq!(of(1), ["removed the half-built project"]);
     }
 
     #[test]

@@ -300,6 +300,8 @@ export interface DeployStep {
   started_ms: number | null;
   finished_ms: number | null;
   failed?: boolean;
+  /** Index of the first output line of this step. Missing on older deploys. */
+  first_line?: number;
 }
 
 export interface DeploySource {

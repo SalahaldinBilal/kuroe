@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { DeploySummary } from "./api";
-import { commitUrl, sourceText, stepSeconds, stepText, triggerText } from "./deploys";
+import type { DeployStep, DeploySummary } from "./api";
+import { commitUrl, sourceText, stepLines, stepSeconds, stepText, triggerText } from "./deploys";
 
 const SHA = "3f2a9c1d8e7b6a5f4e3d2c1b0a9f8e7d6c5b4a39";
 
@@ -62,6 +62,33 @@ describe("steps", () => {
     expect(stepSeconds({ step: "cloning", started_ms: 1000, finished_ms: 3500 }, 9000)).toBe(2.5);
     expect(stepSeconds({ step: "building", started_ms: 1000, finished_ms: null }, 9000)).toBe(8);
     expect(stepSeconds({ step: "starting", started_ms: null, finished_ms: null }, 9000)).toBe(0);
+  });
+
+  it("opens a step to the lines written while it ran", () => {
+    const lines = [
+      "deploying revision 4",
+      "cloning https://github.com/acme/api.git",
+      "at commit 3f2a9c1",
+      "building web as kuroe/api-web:4",
+      "Step 1/10 : FROM rust:1.99-slim",
+      "starting api-blue",
+    ];
+    const steps: DeployStep[] = [
+      { step: "cloning", started_ms: 1, finished_ms: 2, first_line: 1 },
+      { step: "checking_pool", started_ms: 2, finished_ms: 3, first_line: 3 },
+      { step: "building", detail: "web", started_ms: 3, finished_ms: 4, first_line: 3 },
+      { step: "starting", started_ms: 4, finished_ms: null, first_line: 5 },
+      { step: "health_check", started_ms: null, finished_ms: null },
+    ];
+    expect(stepLines(steps, 0, lines)).toEqual(["cloning https://github.com/acme/api.git", "at commit 3f2a9c1"]);
+    expect(stepLines(steps, 1, lines)).toEqual([]);
+    expect(stepLines(steps, 2, lines)).toEqual(["building web as kuroe/api-web:4", "Step 1/10 : FROM rust:1.99-slim"]);
+    expect(stepLines(steps, 3, lines)).toEqual(["starting api-blue"]);
+  });
+
+  it("has nothing to open on deploys recorded before steps kept their lines", () => {
+    const steps: DeployStep[] = [{ step: "cloning", started_ms: 1, finished_ms: 2 }];
+    expect(stepLines(steps, 0, ["cloning https://github.com/acme/api.git"])).toEqual([]);
   });
 
   it("names the step with what it works on", () => {

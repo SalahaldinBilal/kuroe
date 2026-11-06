@@ -219,7 +219,7 @@ function DeployDrawer(props: { detail: DeploymentDetail; deploy?: string; onClos
               fallback={
                 <>
                   <Show when={d().steps.length > 0}>
-                    <StepList steps={d().steps} />
+                    <StepList steps={d().steps} lines={d().output.split("\n")} />
                   </Show>
                   <Show when={d().output} fallback={<p class="muted">This deploy wrote no output.</p>}>
                     <DeployOutput text={d().output} height="none" />

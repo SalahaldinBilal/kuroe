@@ -15,6 +15,17 @@ function css(style: AnsiStyle): JSX.CSSProperties | undefined {
   };
 }
 
+export function AnsiSegments(props: { line: AnsiLine }) {
+  return (
+    <For each={props.line}>
+      {(segment) => {
+        const style = css(segment.style);
+        return style ? <span style={style}>{segment.text}</span> : segment.text;
+      }}
+    </For>
+  );
+}
+
 export function AnsiText(props: { text: string }) {
   const cache = new Map();
   const lines = createMemo<AnsiLine[]>(() => parseAnsi(props.text, cache));
@@ -23,12 +34,7 @@ export function AnsiText(props: { text: string }) {
       {(line, i) => (
         <>
           {i() > 0 ? "\n" : ""}
-          <For each={line}>
-            {(segment) => {
-              const style = css(segment.style);
-              return style ? <span style={style}>{segment.text}</span> : segment.text;
-            }}
-          </For>
+          <AnsiSegments line={line} />
         </>
       )}
     </For>

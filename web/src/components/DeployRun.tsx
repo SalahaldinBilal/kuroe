@@ -1,6 +1,6 @@
-import { createEffect, createSignal, For, Match, on, onCleanup, Show, Switch } from "solid-js";
+import { createEffect, createMemo, createSignal, Index, Match, on, onCleanup, Show, Switch } from "solid-js";
 import { api, type DeployStep, type LiveDeployMessage } from "../api";
-import { STEP_LABELS, stepSeconds } from "../deploys";
+import { STEP_LABELS, stepLines, stepSeconds } from "../deploys";
 import { formatDuration } from "../format";
 import { onEvent, RETRY_SECONDS } from "../states/eventState";
 import { AnsiText } from "./AnsiText";
@@ -10,8 +10,10 @@ import Spinner from "./ui/Spinner/Spinner";
 /** Close reasons the server sends when the stream is over. Anything else is a dropped connection. */
 const ENDED = new Set(["finished", "idle"]);
 
-export function StepList(props: { steps: DeployStep[] }) {
+/** With `lines`, a step that wrote output opens to show just its part. */
+export function StepList(props: { steps: DeployStep[]; lines?: string[] }) {
   const [now, setNow] = createSignal(Date.now());
+  const [open, setOpen] = createSignal<ReadonlySet<number>>(new Set());
   createEffect(() => {
     if (!props.steps.some((s) => s.started_ms != null && s.finished_ms == null)) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -24,37 +26,59 @@ export function StepList(props: { steps: DeployStep[] }) {
     return step.failed ? "bad" : "done";
   }
 
+  function toggle(index: number) {
+    const next = new Set(open());
+    if (!next.delete(index)) next.add(index);
+    setOpen(next);
+  }
+
   return (
     <ol class="deploy-steps">
-      <For each={props.steps}>
-        {(step) => (
-          <li class={state(step)}>
-            <span class="mark">
-              <Switch>
-                <Match when={state(step) === "on"}>
-                  <Spinner size={14} />
-                </Match>
-                <Match when={state(step) === "wait"}>
-                  <span class="pip" />
-                </Match>
-                <Match when={state(step) === "bad"}>
-                  <Icon name="x" />
-                </Match>
-                <Match when={state(step) === "done"}>
-                  <Icon name="check" />
-                </Match>
-              </Switch>
-            </span>
-            <span class="label">{STEP_LABELS[step.step]}</span>
-            <Show when={step.detail}>
-              <span class="detail">{step.detail}</span>
-            </Show>
-            <Show when={state(step) !== "wait"}>
-              <span class="time">{formatDuration(stepSeconds(step, now()))}</span>
-            </Show>
-          </li>
-        )}
-      </For>
+      <Index each={props.steps}>
+        {(step, index) => {
+          const output = createMemo(() => (props.lines ? stepLines(props.steps, index, props.lines).join("\n") : ""));
+          const expanded = () => open().has(index) && output() !== "";
+          return (
+            <li class={state(step())}>
+              <button
+                type="button"
+                class="step-row"
+                disabled={!output()}
+                aria-expanded={expanded()}
+                onClick={() => toggle(index)}
+              >
+                <span class="mark">
+                  <Switch>
+                    <Match when={state(step()) === "on"}>
+                      <Spinner size={14} />
+                    </Match>
+                    <Match when={state(step()) === "wait"}>
+                      <span class="pip" />
+                    </Match>
+                    <Match when={state(step()) === "bad"}>
+                      <Icon name="x" />
+                    </Match>
+                    <Match when={state(step()) === "done"}>
+                      <Icon name="check" />
+                    </Match>
+                  </Switch>
+                </span>
+                <span class="label">{STEP_LABELS[step().step]}</span>
+                <Show when={step().detail}>
+                  <span class="detail">{step().detail}</span>
+                </Show>
+                <Show when={state(step()) !== "wait"}>
+                  <span class="time">{formatDuration(stepSeconds(step(), now()))}</span>
+                </Show>
+                <Icon name="down" class={output() ? "chev" : "chev none"} />
+              </button>
+              <Show when={expanded()}>
+                <DeployOutput text={output()} follow height="240px" />
+              </Show>
+            </li>
+          );
+        }}
+      </Index>
     </ol>
   );
 }
@@ -94,7 +118,8 @@ function parse(data: unknown): LiveDeployMessage | null {
 
 /** Follows the running deploy. `onEnd` runs once the server says the stream is over. */
 export function LiveDeploy(props: { deployment: string; onEnd: () => void }) {
-  const [text, setText] = createSignal("");
+  const [shown, setShown] = createSignal<string[]>([]);
+  const text = createMemo(() => shown().join("\n"));
   const [steps, setSteps] = createSignal<DeployStep[]>([]);
   let lines: string[] = [];
   let partial: string | null = null;
@@ -108,7 +133,7 @@ export function LiveDeploy(props: { deployment: string; onEnd: () => void }) {
     if (frame !== undefined) return;
     frame = requestAnimationFrame(() => {
       frame = undefined;
-      setText(partial == null ? lines.join("\n") : [...lines, partial].join("\n"));
+      setShown(partial == null ? [...lines] : [...lines, partial]);
     });
   }
 
@@ -177,7 +202,7 @@ export function LiveDeploy(props: { deployment: string; onEnd: () => void }) {
   return (
     <>
       <Show when={steps().length > 0}>
-        <StepList steps={steps()} />
+        <StepList steps={steps()} lines={shown()} />
       </Show>
       <Show when={text()}>
         <DeployOutput text={text()} follow />

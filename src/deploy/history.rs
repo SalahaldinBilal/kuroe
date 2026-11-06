@@ -89,11 +89,14 @@ pub struct StepRecord {
     pub finished_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub failed: bool,
+    /// Index of the first output line written during this step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_line: Option<usize>,
 }
 
 impl StepRecord {
     fn waiting(step: Step, detail: Option<String>) -> Self {
-        StepRecord { step, detail, started_ms: None, finished_ms: None, failed: false }
+        StepRecord { step, detail, started_ms: None, finished_ms: None, failed: false, first_line: None }
     }
 
     fn running(&self) -> bool {
@@ -125,6 +128,12 @@ pub fn start_step(steps: &mut Vec<StepRecord>, step: Step, detail: Option<String
     let entry = &mut steps[first_waiting];
     entry.detail = detail;
     entry.started_ms = Some(at);
+}
+
+pub fn mark_first_line(steps: &mut [StepRecord], line: usize) {
+    if let Some(step) = steps.iter_mut().find(|s| s.running()) {
+        step.first_line = Some(line);
+    }
 }
 
 /// Marks the step that was running when the deploy went wrong. Steps after it, like a rollback, keep their marks.
@@ -447,6 +456,14 @@ mod tests {
 
         start_step(&mut steps, Step::StoppingOld, Some("shop-green".into()), 4);
         assert_eq!(names(&steps).last(), Some(&(Step::StoppingOld, true)), "an unplanned step is added where it happens");
+    }
+
+    #[test]
+    fn steps_saved_before_line_marks_still_load() {
+        let saved = r#"[{"step":"cloning","started_ms":1,"finished_ms":2},{"step":"building","detail":"web","started_ms":2,"finished_ms":9,"failed":true}]"#;
+        let steps: Vec<StepRecord> = serde_json::from_str(saved).unwrap();
+        assert_eq!(steps.len(), 2);
+        assert!(steps.iter().all(|s| s.first_line.is_none()));
     }
 
     #[test]
