@@ -1944,6 +1944,24 @@ fieldset.tiles {
   }
 }
 
+.update-other {
+  > summary {
+    width: fit-content;
+    color: var(--muted);
+    font-size: 12.5px;
+    cursor: pointer;
+
+    &:hover {
+      color: var(--ink);
+    }
+  }
+
+  > form,
+  > pre {
+    margin-top: 10px;
+  }
+}
+
 .ws-note {
   display: flex;
   align-items: center;

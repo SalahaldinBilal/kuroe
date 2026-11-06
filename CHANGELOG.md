@@ -9,6 +9,10 @@
 - Charts no longer fade out while they reload in the background. The "By deployment" charts on the Metrics page faded every 10 seconds, and a deployment's charts faded whenever one of its containers started or stopped. A live range now shows "Live" next to the range picker, and "Refreshing" while new samples load.
 - Clicking a name in a chart's legend hides that line, and the scale adjusts to the lines still shown. Click it again to bring it back.
 - Environment variable and secret values mark their spaces. Spaces inside a value get a light tint, and spaces at the start or end get a yellow one. A value that starts or ends with spaces, tabs or a non-breaking space says so under the field, with a link to remove them. Secret values, and the value field on the Secrets page, show that note too.
+- Errors that come from a proxy in front of kuroe, or from kuroe's "HTTPS only" refusal, say what happened instead of showing an empty message. Buttons like "Add it for me" showed only an icon when that happened.
+- The CPU demand chart's title is just "CPU demand", without "(load average)" or the "all cores busy" note, which broke the value and the time over several lines. The line still shows once the load gets near the core count.
+- The Domains table keeps space between a domain's target and its routing summary, and between the certificate picker and the certificate name.
+- The update card in Settings has one button for a new release, "Update to 0.3.0", instead of filling the image field first. While kuroe updates, the card only shows the progress and the time so far. Updating to a different image or binary is under "Update to another version", and the release check runs again once the update is done.
 - Each step of a deploy opens to show the output it wrote, for a running deploy and for finished ones. Deploys from before this version only show their full output.
 
 ## [0.2.0] - 2026-11-03

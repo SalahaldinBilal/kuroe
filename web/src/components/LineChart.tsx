@@ -23,8 +23,8 @@ interface Props {
   tick?: (v: number) => string;
   /** Steps in powers of two, for bytes. */
   binary?: boolean;
-  /** A reference line. `text` replaces the default "label value" next to it. */
-  limit?: { value: number; label: string; text?: string };
+  /** A reference line. `text` replaces "label value" next to it, `named: false` keeps it out of the title. */
+  limit?: { value: number; label: string; text?: string; named?: boolean };
   gap?: number;
   domain?: [number, number];
   /** Shows a placeholder of the chart's size until the first data arrives. */
@@ -230,7 +230,7 @@ export function LineChart(props: Props) {
       <figcaption class="cc-h">
         <span class="cc-t">
           {props.title}
-          <Show when={props.limit && !limitShown()}>
+          <Show when={props.limit && props.limit.named !== false && !limitShown()}>
             <span class="cc-limit">↑ {limitText()}</span>
           </Show>
         </span>

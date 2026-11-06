@@ -718,6 +718,36 @@ export class ApiError extends Error {
 
 export const API_BASE = "/api/v1";
 
+const STATUS_NAMES: Record<number, string> = {
+  400: "Bad Request",
+  401: "Unauthorized",
+  403: "Forbidden",
+  404: "Not Found",
+  408: "Request Timeout",
+  413: "Content Too Large",
+  429: "Too Many Requests",
+  500: "Internal Server Error",
+  502: "Bad Gateway",
+  503: "Service Unavailable",
+  504: "Gateway Timeout",
+};
+
+/** HTTP/2 has no status text, and proxies in front of kuroe answer in plain text or HTML, not kuroe's JSON. */
+export function failureText(status: number, body: string): string {
+  try {
+    const error = JSON.parse(body)?.error;
+    if (typeof error === "string" && error.trim()) return error;
+  } catch {}
+  const text = body.trim();
+  if (text && text.length <= 300 && !text.startsWith("<")) return text;
+  const name = STATUS_NAMES[status];
+  return `The request failed with status ${status}${name ? ` ${name}` : ""}.`;
+}
+
+async function failure(res: Response): Promise<ApiError> {
+  return new ApiError(res.status, failureText(res.status, await res.text().catch(() => "")));
+}
+
 async function request<T>(method: string, path: string, body?: unknown, raw?: Blob): Promise<T> {
   const headers: Record<string, string> = {};
   if (method !== "GET") headers["x-kuroe-csrf"] = "1";
@@ -729,10 +759,7 @@ async function request<T>(method: string, path: string, body?: unknown, raw?: Bl
     credentials: "same-origin",
     body: raw ?? (body === undefined ? undefined : JSON.stringify(body)),
   });
-  if (!res.ok) {
-    const data = await res.json().catch(() => null);
-    throw new ApiError(res.status, data?.error ?? res.statusText);
-  }
+  if (!res.ok) throw await failure(res);
   if (res.status === 204 || res.status === 202 || res.status === 201) {
     const text = await res.text();
     return (text ? JSON.parse(text) : undefined) as T;
@@ -938,7 +965,7 @@ export const api = {
     const res = await fetch(`${API_BASE}/runners/${id}/instances/${enc(instance)}/logs`, {
       credentials: "same-origin",
     });
-    if (!res.ok) throw new ApiError(res.status, (await res.json().catch(() => null))?.error ?? res.statusText);
+    if (!res.ok) throw await failure(res);
     return res.text();
   },
 
@@ -969,7 +996,7 @@ export const api = {
     request<void>("DELETE", `/containers/${container}/files/media?path=${enc(path)}`),
   previewText: async (container: string, path: string, max: number): Promise<string> => {
     const res = await fetch(api.previewUrl(container, path, max), { credentials: "same-origin" });
-    if (!res.ok) throw new ApiError(res.status, (await res.json().catch(() => null))?.error ?? res.statusText);
+    if (!res.ok) throw await failure(res);
     return res.text();
   },
   uploadFile: (container: string, dir: string, file: File) =>

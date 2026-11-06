@@ -247,12 +247,12 @@ export function Domains(props: Props) {
                         <Show
                           when={d.options.redirect}
                           fallback={
-                            <>
+                            <div class="hrow wrap">
                               <span class="chip">{site() ? "static files" : `${d.service}:${d.port}`}</span>
                               <Show when={routingSummary(d.options)}>
                                 {(summary) => <span class="hint">{summary()}</span>}
                               </Show>
-                            </>
+                            </div>
                           }
                         >
                           {(target) => (
@@ -275,14 +275,16 @@ export function Domains(props: Props) {
                               when={canEdit() && d.served_by.kind !== "server"}
                               fallback={<span class="muted">{servedLabel(d.served_by)}</span>}
                             >
-                              <Select
-                                size="sm"
-                                label={`Certificate for ${d.hostname}`}
-                                items={pinItems(d.hostname)}
-                                value={d.certificate ?? ""}
-                                onChange={(certificate) => pin(d, certificate)}
-                              />
-                              <span class="hint">{servedLabel(d.served_by)}</span>
+                              <div class="hrow wrap">
+                                <Select
+                                  size="sm"
+                                  label={`Certificate for ${d.hostname}`}
+                                  items={pinItems(d.hostname)}
+                                  value={d.certificate ?? ""}
+                                  onChange={(certificate) => pin(d, certificate)}
+                                />
+                                <span class="hint">{servedLabel(d.served_by)}</span>
+                              </div>
                             </Show>
                           </Show>
                         </td>

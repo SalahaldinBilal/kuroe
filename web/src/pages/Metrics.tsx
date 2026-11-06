@@ -122,12 +122,12 @@ export function Metrics() {
           />
           <LineChart
             {...axis()}
-            title="CPU demand (load average)"
+            title="CPU demand"
             hint="Processes running or waiting for a CPU, averaged over a minute. Below the line, cores are free. Above it, work waits for a CPU. High demand with low CPU usually means a slow disk."
             points={series((p) => p.load1)}
             format={(v) => (cores() ? `${v.toFixed(2)} of ${cores()} cores` : v.toFixed(2))}
             tick={(v) => v.toFixed(v % 1 ? 1 : 0)}
-            limit={cores() ? { value: cores() ?? 0, label: "cores", text: "all cores busy" } : undefined}
+            limit={cores() ? { value: cores() ?? 0, label: "cores", text: "all cores busy", named: false } : undefined}
           />
           <LineChart
             {...networkAxis()}
