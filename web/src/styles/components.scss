@@ -1425,6 +1425,23 @@ details.out {
   }
 }
 
+.live-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 92px;
+  color: var(--faint);
+  font-size: 12.5px;
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
 .chart-card {
   padding: 14px 14px 8px;
 
@@ -1551,11 +1568,39 @@ details.out {
   font-size: 12px;
 
   li {
+    min-width: 0;
+  }
+
+  .cc-key {
     display: flex;
     align-items: center;
     gap: 8px;
-    min-width: 0;
+    width: calc(100% + 8px);
     min-height: 22px;
+    padding: 0 4px;
+    margin: 0 -4px;
+    border: 0;
+    border-radius: var(--r-sm);
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition:
+      background-color var(--t-fast) var(--ease),
+      opacity var(--t-fast) var(--ease);
+
+    &:hover {
+      background: var(--hover);
+    }
+
+    &.off {
+      opacity: 0.45;
+
+      .grow {
+        text-decoration: line-through;
+      }
+    }
 
     .grow {
       overflow: hidden;

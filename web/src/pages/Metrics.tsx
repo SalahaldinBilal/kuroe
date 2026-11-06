@@ -2,7 +2,7 @@ import { createResource, createSignal, For, Show } from "solid-js";
 import { useUser } from "../App";
 import { api, can, type HostPoint, type NetworkPoint, type ServicePoint } from "../api";
 import { gapFor, LineChart, type Series, topSeries } from "../components/LineChart";
-import { isLive, type Range, RangePicker, rangeDomain, windowOf } from "../components/RangePicker";
+import { isLive, LiveStatus, type Range, RangePicker, rangeDomain, windowOf } from "../components/RangePicker";
 import { Card, Note, PageHeader } from "../components/ui/Blocks";
 import Button from "../components/ui/Button/Button";
 import EmptyState from "../components/ui/EmptyState/EmptyState";
@@ -37,8 +37,8 @@ export function Metrics() {
   const [byDeployment, { refetch: reloadDeployments }] = createResource(range, (r) =>
     api.metricsByDeployment(windowOf(r)),
   );
-  const quiet = useLive(() => isLive(range()) && reloadHost(), HOST_SAMPLE_SECONDS);
-  useLive(() => isLive(range()) && reloadDeployments(), CONTAINER_SAMPLE_SECONDS);
+  const hostQuiet = useLive(() => isLive(range()) && reloadHost(), HOST_SAMPLE_SECONDS);
+  const deploymentsQuiet = useLive(() => isLive(range()) && reloadDeployments(), CONTAINER_SAMPLE_SECONDS);
   const perDeployment = (pick: (p: ServicePoint) => number): Series[] =>
     topSeries(
       (byDeployment.latest?.deployments ?? []).map((d) => ({
@@ -89,13 +89,20 @@ export function Metrics() {
       <PageHeader
         title="Metrics"
         description="This host, its disk and its deployments"
-        actions={<RangePicker value={range()} onChange={setRange} />}
+        actions={
+          <div class="hrow" style={{ gap: "10px" }}>
+            <Show when={isLive(range())}>
+              <LiveStatus refreshing={hostQuiet() || deploymentsQuiet()} />
+            </Show>
+            <RangePicker value={range()} onChange={setRange} />
+          </div>
+        }
       />
       <div class="stack" style={{ gap: "24px" }}>
         <Show when={host.error}>
           <Note tone="bad">{String(host.error?.message ?? host.error)}</Note>
         </Show>
-        <div class="charts wide" classList={{ refetching: host.loading && !quiet() }}>
+        <div class="charts wide" classList={{ refetching: host.loading && !hostQuiet() }}>
           <LineChart {...axis()} title="CPU" points={series((p) => p.cpu)} format={formatPercent} />
           <LineChart
             {...axis()}
@@ -148,7 +155,7 @@ export function Metrics() {
           <Show when={byDeployment.error}>
             <Note tone="bad">{String(byDeployment.error?.message ?? byDeployment.error)}</Note>
           </Show>
-          <div class="charts wide" classList={{ refetching: byDeployment.loading && !quiet() }}>
+          <div class="charts wide" classList={{ refetching: byDeployment.loading && !deploymentsQuiet() }}>
             <LineChart {...deploymentAxis()} title="CPU" series={perDeployment((p) => p.cpu)} format={formatPercent} />
             <LineChart
               {...deploymentAxis()}

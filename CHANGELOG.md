@@ -6,6 +6,8 @@
 - Logs keep being saved after a container restarts. Before, a restart could stop kuroe from saving that container's logs until kuroe itself restarted.
 - Saved logs of the current day add new lines at the end instead of reloading everything when a container starts or stops.
 - Saved logs show only each line's message. The time sits in a column on the left, with the full time, stream and container on hover. Deployments with more than one container also show which container wrote each line. Switches above the log turn the time, stream and container columns on or off, and the browser remembers the choice.
+- Charts no longer fade out while they reload in the background. The "By deployment" charts on the Metrics page faded every 10 seconds, and a deployment's charts faded whenever one of its containers started or stopped. A live range now shows "Live" next to the range picker, and "Refreshing" while new samples load.
+- Clicking a name in a chart's legend hides that line, and the scale adjusts to the lines still shown. Click it again to bring it back.
 - Each step of a deploy opens to show the output it wrote, for a running deploy and for finished ones. Deploys from before this version only show their full output.
 
 ## [0.2.0] - 2026-11-03

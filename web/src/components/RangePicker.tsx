@@ -6,6 +6,7 @@ import Button from "./ui/Button/Button";
 import Field from "./ui/Field/Field";
 import { Icon } from "./ui/Icon";
 import Input from "./ui/Input/Input";
+import Spinner from "./ui/Spinner/Spinner";
 
 export type Preset = "1h" | "6h" | "24h" | "7d" | "30d";
 
@@ -129,6 +130,36 @@ export function pickDay(
     return { from: fieldText(day + fromTime), to: fieldText(dayOf(from) + toTime), picking: "start" };
   }
   return { from: fromText, to: fieldText(day + toTime), picking: "start" };
+}
+
+/** Stays up a moment after a fast reload, so it reads as a status instead of a flicker. */
+const REFRESH_SHOWN_MS = 700;
+
+export function LiveStatus(props: { refreshing: boolean }) {
+  const [shown, setShown] = createSignal(false);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  createEffect(() => {
+    clearTimeout(timer);
+    if (props.refreshing) setShown(true);
+    else timer = setTimeout(() => setShown(false), REFRESH_SHOWN_MS);
+  });
+  onCleanup(() => clearTimeout(timer));
+  return (
+    <span class="live-status" aria-live="polite">
+      <Show
+        when={shown()}
+        fallback={
+          <>
+            <span class="live-dot" />
+            Live
+          </>
+        }
+      >
+        <Spinner size={12} />
+        Refreshing
+      </Show>
+    </span>
+  );
 }
 
 export function RangePicker(props: { value: Range; onChange: (range: Range) => void }) {

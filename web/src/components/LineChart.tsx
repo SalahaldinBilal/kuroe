@@ -120,12 +120,20 @@ function stamp(t: number): string {
 export function LineChart(props: Props) {
   const gradient = createUniqueId();
   const [hover, setHover] = createSignal<number | null>(null);
+  const [hidden, setHidden] = createSignal<ReadonlySet<string>>(new Set());
   const multi = () => props.series !== undefined;
   const lines = createMemo<Series[]>(() => props.series ?? [{ label: props.title, points: props.points ?? [] }]);
+  const shown = (i: number) => !hidden().has(lines()[i]?.label);
   const samples = createMemo(() => lines().map((s) => s.points.filter((p): p is Sample => p.v != null)));
   const times = createMemo(() => [...new Set(samples().flatMap((s) => s.map((p) => p.t)))].sort((a, b) => a - b));
   const segments = createMemo(() => lines().map((s) => runs(s.points, props.gap ?? Number.POSITIVE_INFINITY)));
-  const peak = () => Math.max(0, ...samples().flatMap((s) => s.map((p) => p.v)));
+  const peak = () => Math.max(0, ...samples().flatMap((s, i) => (shown(i) ? s.map((p) => p.v) : [])));
+
+  function toggleLine(label: string) {
+    const next = new Set(hidden());
+    if (!next.delete(label)) next.add(label);
+    setHidden(next);
+  }
   const limitShown = () => {
     const limit = props.limit;
     return !!limit && limit.value > 0 && peak() >= limit.value * LIMIT_REACH;
@@ -183,6 +191,7 @@ export function LineChart(props: Props) {
     const t = at();
     let sum: number | undefined;
     samples().forEach((_, s) => {
+      if (!shown(s)) return;
       const v = valueAt(s, t);
       if (v != null) sum = (sum ?? 0) + v;
     });
@@ -312,7 +321,7 @@ export function LineChart(props: Props) {
           </Show>
           <For each={lines()}>
             {(s, i) => (
-              <>
+              <Show when={shown(i())}>
                 <path
                   class="nc-line"
                   d={paths()[i()]}
@@ -329,7 +338,7 @@ export function LineChart(props: Props) {
                     />
                   )}
                 </For>
-              </>
+              </Show>
             )}
           </For>
           <Show when={hover() != null && at() != null}>
@@ -343,7 +352,7 @@ export function LineChart(props: Props) {
           </Show>
           <For each={lines()}>
             {(s, i) => (
-              <Show when={valueAt(i(), at()) != null}>
+              <Show when={shown(i()) && valueAt(i(), at()) != null}>
                 <circle
                   class="nc-dot"
                   cx={scale().x(at() ?? 0)}
@@ -360,11 +369,19 @@ export function LineChart(props: Props) {
             <For each={lines()}>
               {(s, i) => (
                 <li>
-                  <span class="sw-c" style={{ background: seriesColor(s.label, i()) }} />
-                  <span class="grow mono">{s.label}</span>
-                  <span class="mono muted">
-                    {valueAt(i(), at()) != null ? props.format(valueAt(i(), at()) ?? 0) : "none"}
-                  </span>
+                  <button
+                    type="button"
+                    class="cc-key"
+                    classList={{ off: !shown(i()) }}
+                    aria-pressed={shown(i())}
+                    onClick={() => toggleLine(s.label)}
+                  >
+                    <span class="sw-c" style={{ background: seriesColor(s.label, i()) }} />
+                    <span class="grow mono">{s.label}</span>
+                    <span class="mono muted">
+                      {valueAt(i(), at()) != null ? props.format(valueAt(i(), at()) ?? 0) : "none"}
+                    </span>
+                  </button>
                 </li>
               )}
             </For>

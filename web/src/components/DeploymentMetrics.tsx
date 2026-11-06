@@ -1,9 +1,9 @@
-import { createResource, createSignal, Show } from "solid-js";
+import { createMemo, createResource, createSignal, Show } from "solid-js";
 import { api, type ServicePoint, type ServiceSettings } from "../api";
 import { formatBytes, formatPercent, formatRate } from "../format";
 import { useLive } from "../live";
 import { gapFor, LineChart, type Series, topSeries } from "./LineChart";
-import { isLive, type Range, RangePicker, rangeDomain, windowOf } from "./RangePicker";
+import { isLive, LiveStatus, type Range, RangePicker, rangeDomain, windowOf } from "./RangePicker";
 import { Card, Note } from "./ui/Blocks";
 import EmptyState from "./ui/EmptyState/EmptyState";
 import { ready } from "./ui/Overlay";
@@ -28,8 +28,9 @@ export function DeploymentMetrics(props: Props) {
   const [range, setRange] = createSignal<Range>({ preset: "1h" });
   const [view, setView] = createSignal<View>("total");
   const [picked, setPicked] = createSignal<string | null>(null);
+  const deployment = createMemo(() => props.deployment);
   const [data, { refetch }] = createResource(
-    () => ({ id: props.deployment, range: range() }),
+    () => ({ id: deployment(), range: range() }),
     ({ id, range }) => api.deploymentMetrics(id, windowOf(range)),
   );
   const quiet = useLive(() => isLive(range()) && refetch(), CONTAINER_SAMPLE_SECONDS);
@@ -103,6 +104,9 @@ export function DeploymentMetrics(props: Props) {
           </Show>
         </Show>
         <span class="grow" />
+        <Show when={isLive(range())}>
+          <LiveStatus refreshing={quiet()} />
+        </Show>
         <RangePicker value={range()} onChange={setRange} />
       </div>
       <Show when={data.error}>
