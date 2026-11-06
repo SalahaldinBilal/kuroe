@@ -1817,6 +1817,15 @@ fieldset.tiles {
     display: inline-flex;
     color: var(--faint);
   }
+
+  // A note under the value makes it taller, so the row lines up on the fields instead of centering on the note.
+  &:has(> .secret-value .ws-note, > .secret-value .ref-note) {
+    align-items: flex-start;
+
+    > button {
+      margin-top: calc((var(--control-height) - 26px) / 2);
+    }
+  }
 }
 
 .kv-actions {
@@ -1924,6 +1933,34 @@ fieldset.tiles {
 
   .link {
     all: unset;
+    color: var(--text);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+
+    &:hover {
+      color: var(--ink);
+    }
+  }
+}
+
+.ws-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  color: var(--warn);
+  font-size: 12px;
+
+  svg {
+    flex-shrink: 0;
+    width: 13px;
+    height: 13px;
+  }
+
+  .link {
+    all: unset;
+    margin-left: 2px;
     color: var(--text);
     text-decoration: underline;
     text-underline-offset: 2px;

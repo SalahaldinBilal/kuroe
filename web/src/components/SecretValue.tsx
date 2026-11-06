@@ -3,6 +3,7 @@ import { useUser } from "../App";
 import { api, can } from "../api";
 import savedSecretState from "../states/savedSecretState";
 import useToastState from "../states/toastState";
+import { whitespaceProblem } from "../whitespace";
 import Button from "./ui/Button/Button";
 import EmptyState from "./ui/EmptyState/EmptyState";
 import Field from "./ui/Field/Field";
@@ -65,6 +66,26 @@ export function SecretRef(props: { name: string; onUnlink?: () => void }) {
   );
 }
 
+export function WhitespaceNote(props: { value: string; onTrim: (value: string) => void }) {
+  const problem = () => whitespaceProblem(props.value);
+  const trimmed = () => props.value.trim();
+  return (
+    <Show when={problem()}>
+      {(text) => (
+        <div class="ws-note">
+          <Icon name="alert" />
+          <span>{text()}.</span>
+          <Show when={trimmed() !== props.value && trimmed() !== ""}>
+            <button type="button" class="link" onClick={() => props.onTrim(trimmed())}>
+              Remove it
+            </button>
+          </Show>
+        </div>
+      )}
+    </Show>
+  );
+}
+
 export function SecretValue(props: Props) {
   const access = useSecretAccess();
   const [picking, setPicking] = createSignal(false);
@@ -117,6 +138,7 @@ export function SecretValue(props: Props) {
               label={props.label}
               placeholder={props.placeholder ?? "value"}
               type={props.secret ? "password" : "text"}
+              showSpaces
               value={props.value}
               disabled={props.disabled}
               before={
@@ -157,6 +179,12 @@ export function SecretValue(props: Props) {
           </Button>
         </Show>
       </div>
+      <Show when={!props.secretRef}>
+        <WhitespaceNote
+          value={props.value}
+          onTrim={(value) => props.onChange({ value, ref: null, secret: props.secret })}
+        />
+      </Show>
       <Show when={matched()}>
         {(m) => (
           <div class="ref-note">

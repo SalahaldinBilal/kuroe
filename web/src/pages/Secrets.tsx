@@ -2,6 +2,7 @@ import { A } from "@solidjs/router";
 import { createSignal, For, onMount, Show } from "solid-js";
 import { useUser } from "../App";
 import { api, can, type SavedSecret } from "../api";
+import { WhitespaceNote } from "../components/SecretValue";
 import { Card, PageHeader } from "../components/ui/Blocks";
 import Button from "../components/ui/Button/Button";
 import EmptyState from "../components/ui/EmptyState/EmptyState";
@@ -252,14 +253,17 @@ export function Secrets() {
                     : undefined
                 }
               >
-                <Input
-                  mono
-                  type="password"
-                  label="Value"
-                  placeholder={d().id ? "unchanged" : "value"}
-                  value={d().value}
-                  onValue={(value) => setEditing({ ...d(), value })}
-                />
+                <div class="secret-value">
+                  <Input
+                    mono
+                    type="password"
+                    label="Value"
+                    placeholder={d().id ? "unchanged" : "value"}
+                    value={d().value}
+                    onValue={(value) => setEditing({ ...d(), value })}
+                  />
+                  <WhitespaceNote value={d().value} onTrim={(value) => setEditing({ ...d(), value })} />
+                </div>
               </Field>
             </>
           )}

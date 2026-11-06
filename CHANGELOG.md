@@ -8,6 +8,7 @@
 - Saved logs show only each line's message. The time sits in a column on the left, with the full time, stream and container on hover. Deployments with more than one container also show which container wrote each line. Switches above the log turn the time, stream and container columns on or off, and the browser remembers the choice.
 - Charts no longer fade out while they reload in the background. The "By deployment" charts on the Metrics page faded every 10 seconds, and a deployment's charts faded whenever one of its containers started or stopped. A live range now shows "Live" next to the range picker, and "Refreshing" while new samples load.
 - Clicking a name in a chart's legend hides that line, and the scale adjusts to the lines still shown. Click it again to bring it back.
+- Environment variable and secret values mark their spaces. Spaces inside a value get a light tint, and spaces at the start or end get a yellow one. A value that starts or ends with spaces, tabs or a non-breaking space says so under the field, with a link to remove them. Secret values, and the value field on the Secrets page, show that note too.
 - Each step of a deploy opens to show the output it wrote, for a running deploy and for finished ones. Deploys from before this version only show their full output.
 
 ## [0.2.0] - 2026-11-03

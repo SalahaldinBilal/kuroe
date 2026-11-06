@@ -63,13 +63,50 @@
       -webkit-appearance: none;
     }  }
 
-  &.Mono input {
+  &.Mono input,
+  &.Mono .Spaces {
     font-family: var(--font-mono);
     font-size: var(--font-sm);
   }
 
   &.Clearing {
     padding-right: 5px;
+  }
+}
+
+.Field {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+
+  input {
+    position: relative;
+  }
+}
+
+.Spaces {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  color: transparent;
+  font-family: inherit;
+  font-size: var(--font-md);
+  white-space: pre;
+  pointer-events: none;
+
+  mark {
+    border-radius: 2px;
+    background-color: color-mix(in srgb, var(--text-faint) 30%, transparent);
+    color: transparent;
+  }
+
+  mark.Edge {
+    background-color: color-mix(in srgb, var(--warn-dot) 50%, transparent);
   }
 }
 
