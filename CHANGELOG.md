@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-07
+
 - "Add it for me" on the push webhook no longer turns the webhook on when the provider refuses it. Before, kuroe saved the new secret first, so the card showed "Enabled" after a refresh even though no hook existed at GitHub, GitLab or Gitea. Refusals are now also written to kuroe's log.
 - kuroe's errors reach the browser behind Cloudflare. Errors about Docker, the proxy, providers and the update check were sent as 502 or 504, and Cloudflare replaced those with its own "Bad gateway" page. They now come back as 503 with kuroe's message.
 
