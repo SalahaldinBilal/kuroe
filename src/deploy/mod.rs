@@ -60,9 +60,14 @@ impl TryFrom<Row> for Deployment {
 /// Saves a new push webhook secret, sealed, and returns it in plain text.
 pub async fn new_webhook_secret(db: &SqlitePool, id: &str) -> sqlx::Result<String> {
     let secret = tokens::random_secret(24);
-    let sealed = crate::secrets::sealer().seal(&crate::secrets::webhook_aad(id), &secret);
-    sqlx::query("UPDATE deployments SET webhook_secret = ? WHERE id = ?").bind(sealed).bind(id).execute(db).await?;
+    save_webhook_secret(db, id, &secret).await?;
     Ok(secret)
+}
+
+pub async fn save_webhook_secret(db: &SqlitePool, id: &str, secret: &str) -> sqlx::Result<()> {
+    let sealed = crate::secrets::sealer().seal(&crate::secrets::webhook_aad(id), secret);
+    sqlx::query("UPDATE deployments SET webhook_secret = ? WHERE id = ?").bind(sealed).bind(id).execute(db).await?;
+    Ok(())
 }
 
 pub async fn has_webhook(db: &SqlitePool, id: &str) -> sqlx::Result<bool> {

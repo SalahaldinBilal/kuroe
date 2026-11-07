@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- "Add it for me" on the push webhook no longer turns the webhook on when the provider refuses it. Before, kuroe saved the new secret first, so the card showed "Enabled" after a refresh even though no hook existed at GitHub, GitLab or Gitea. Refusals are now also written to kuroe's log.
+- kuroe's errors reach the browser behind Cloudflare. Errors about Docker, the proxy, providers and the update check were sent as 502 or 504, and Cloudflare replaced those with its own "Bad gateway" page. They now come back as 503 with kuroe's message.
+
 ## [0.2.2] - 2026-11-06
 
 - Updating no longer rolls back on servers with HTTP access set to "local". The new version started fine, but its check came over plain HTTP from the updater container and got refused, so the update timed out after 30 seconds. The check now uses `/api/v1/health`. With "local", that route also answers plain HTTP sent straight from a container on the same host, and nothing else from outside.

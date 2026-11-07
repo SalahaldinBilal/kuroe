@@ -194,14 +194,19 @@ pub async fn webhook_info(State(state): State<AppState>, current: CurrentUser, P
     Ok(Json(info))
 }
 
-/// A new webhook secret, saved sealed. Returns it in plain text once.
-async fn new_hook_secret(state: &AppState, d: &Deployment) -> ApiResult<String> {
+async fn check_hook_allowed(state: &AppState, d: &Deployment) -> ApiResult<()> {
     if !matches!(d.spec.source, Source::Git { .. }) {
         return Err(ApiError::bad_request("push webhooks pull and build, so they need a git deployment"));
     }
     if let Some(app) = app_name(state, d).await? {
         return Err(ApiError::bad_request(format!("pushes already come in through the GitHub App {app}")));
     }
+    Ok(())
+}
+
+/// A new webhook secret, saved sealed. Returns it in plain text once.
+async fn new_hook_secret(state: &AppState, d: &Deployment) -> ApiResult<String> {
+    check_hook_allowed(state, d).await?;
     Ok(deploy::new_webhook_secret(&state.db, &d.id).await?)
 }
 
@@ -229,7 +234,8 @@ pub async fn install_webhook(State(state): State<AppState>, current: CurrentUser
     let login = login_of(&state, &d).await?.ok_or_else(|| ApiError::bad_request("pick a saved login for this repository first"))?;
     let repo = repo_path(url).ok_or_else(|| ApiError::bad_request(format!("can't tell owner and repository from {url}")))?;
     let base = public_url(&state.db).await?;
-    let secret = new_hook_secret(&state, &d).await?;
+    check_hook_allowed(&state, &d).await?;
+    let secret = tokens::random_secret(24);
     let api = crate::identity::api_base(&login);
     let request = match login.kind {
         Kind::Gitlab => state
@@ -261,12 +267,18 @@ pub async fn install_webhook(State(state): State<AppState>, current: CurrentUser
             })),
         _ => return Err(ApiError::bad_request("this login can't add webhooks, set it up by hand")),
     };
-    let response = request.send().await.map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, format!("{e}")))?;
+    let response = request.send().await.map_err(|e| {
+        tracing::warn!(deployment = %id, "adding the webhook at the provider failed: {e}");
+        ApiError::new(StatusCode::BAD_GATEWAY, format!("couldn't reach the provider: {e}"))
+    })?;
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(ApiError::new(StatusCode::BAD_GATEWAY, format!("the provider refused the webhook ({status}): {}", body.chars().take(300).collect::<String>())));
+        let message = format!("the provider refused the webhook ({status}): {}", body.chars().take(300).collect::<String>());
+        tracing::warn!(deployment = %id, "{message}");
+        return Err(ApiError::new(StatusCode::BAD_GATEWAY, message));
     }
+    deploy::save_webhook_secret(&state.db, &id, &secret).await?;
     Ok(Json(json!({ "installed": true })))
 }
 

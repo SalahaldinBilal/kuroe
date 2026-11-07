@@ -31,7 +31,15 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.status, Json(json!({ "error": self.message }))).into_response()
+        (public_status(self.status), Json(json!({ "error": self.message }))).into_response()
+    }
+}
+
+/// Cloudflare and other proxies in front replace a 502 or 504 body with their own page, which hides kuroe's message.
+pub fn public_status(status: StatusCode) -> StatusCode {
+    match status {
+        StatusCode::BAD_GATEWAY | StatusCode::GATEWAY_TIMEOUT => StatusCode::SERVICE_UNAVAILABLE,
+        other => other,
     }
 }
 
