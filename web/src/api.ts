@@ -697,6 +697,8 @@ export interface LatestRelease {
   url: string;
   image: string;
   binary_url: string | null;
+  changes: string;
+  changes_error: string | null;
 }
 
 export interface UpdaterStatus {

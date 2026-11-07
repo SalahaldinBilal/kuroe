@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- The page reloads by itself once an update is done, so the browser runs the new version's UI right away. A container update counts as done once the updater has checked the new container and removed the old one. The "Now running" note shows again after the reload.
+- "What's new" on the update card opens the changelog of every version between the running one and the latest release, read from `CHANGELOG.md` at the release's tag. Before, it only linked to the newest release on GitHub.
+
 ## [0.2.3] - 2026-11-07
 
 - "Add it for me" on the push webhook no longer turns the webhook on when the provider refuses it. Before, kuroe saved the new secret first, so the card showed "Enabled" after a refresh even though no hook existed at GitHub, GitLab or Gitea. Refusals are now also written to kuroe's log.

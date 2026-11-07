@@ -807,6 +807,51 @@ button.list-i {
   }
 }
 
+.markdown {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+
+  > :first-child {
+    margin-top: 0;
+  }
+
+  h2 {
+    margin: 20px 0 8px;
+    color: var(--ink);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  p,
+  ul,
+  ol {
+    margin: 0 0 8px;
+  }
+
+  ul,
+  ol {
+    padding-left: 18px;
+  }
+
+  li + li {
+    margin-top: 6px;
+  }
+
+  code {
+    padding: 1px 4px;
+    border-radius: 4px;
+    background: var(--sunken);
+    font: 12px var(--font-mono);
+  }
+
+  a {
+    color: var(--ink);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+}
+
 /* code and terminals */
 
 .code {

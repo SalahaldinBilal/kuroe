@@ -1,16 +1,36 @@
 import { createResource, createSignal, Match, onCleanup, Show, Switch } from "solid-js";
 import { api, type LatestRelease, type VersionInfo } from "../api";
 import { errorMessage } from "../states/toastState";
+import { Markdown } from "./Markdown";
 import { Card, ExtLink, Note } from "./ui/Blocks";
 import Button from "./ui/Button/Button";
 import Field from "./ui/Field/Field";
 import Input from "./ui/Input/Input";
+import Modal from "./ui/Modal/Modal";
 import { ready } from "./ui/Overlay";
 import { Bone, Busy, SkeletonCardHead } from "./ui/Skeleton";
 import Spinner from "./ui/Spinner/Spinner";
 
 const POLL_MS = 1000;
 const GIVE_UP_MS = 120_000;
+const DONE_KEY = "kuroe.update-done";
+
+function takeDoneMessage(): string {
+  try {
+    const text = sessionStorage.getItem(DONE_KEY) ?? "";
+    sessionStorage.removeItem(DONE_KEY);
+    return text;
+  } catch {
+    return "";
+  }
+}
+
+function reloadWith(text: string) {
+  try {
+    sessionStorage.setItem(DONE_KEY, text);
+  } catch {}
+  location.reload();
+}
 
 type UpdateBody = { image?: string; binary_url?: string; sha256?: string };
 
@@ -26,53 +46,57 @@ export function SelfUpdate() {
   const [current, { refetch }] = createResource(api.version);
   const [status, { refetch: refetchStatus }] = createResource(api.updateStatus);
   const [latest, { refetch: refetchLatest }] = createResource(api.latestRelease);
-  const [phase, setPhase] = createSignal<"idle" | "updating" | "done" | "failed">("idle");
-  const [message, setMessage] = createSignal("");
+  const doneMessage = takeDoneMessage();
+  const [phase, setPhase] = createSignal<"idle" | "updating" | "done" | "failed">(doneMessage ? "done" : "idle");
+  const [message, setMessage] = createSignal(doneMessage);
   const [target, setTarget] = createSignal("");
   const [started, setStarted] = createSignal(0);
   const [now, setNow] = createSignal(Date.now());
   const [image, setImage] = createSignal<string | null>(null);
   const [binaryUrl, setBinaryUrl] = createSignal("");
   const [sha256, setSha256] = createSignal("");
+  const [showChanges, setShowChanges] = createSignal(false);
   let timer: number | undefined;
   onCleanup(() => clearInterval(timer));
 
   const elapsed = () => Math.max(0, Math.round((now() - started()) / 1000));
 
-  function finish(result: "done" | "failed", text: string) {
+  function failed(text: string) {
     clearInterval(timer);
-    setPhase(result);
+    setPhase("failed");
     setMessage(text);
     refetch();
     refetchStatus();
     refetchLatest();
   }
 
+  function succeeded(text: string) {
+    clearInterval(timer);
+    reloadWith(text);
+  }
+
+  /** A container update counts once the updater exits cleanly, after its health check and cleanup. */
   function watch(before: string) {
     let wentAway = false;
     timer = window.setInterval(async () => {
       setNow(Date.now());
       try {
         const v = await api.version();
-        if (label(v) !== before) {
-          finish("done", `Now running ${label(v)}. Back after ${elapsed()} s.`);
-          return;
-        }
-        if (wentAway) {
+        const changed = label(v) !== before;
+        const done = changed ? `Now running ${label(v)}. Back after ${elapsed()} s.` : "Update finished.";
+        if (changed && v.install.mode !== "container") return succeeded(done);
+        if (changed || wentAway) {
           const s = await api.updateStatus();
           if (s.state === "exited") {
-            finish(
-              s.exit_code === 0 ? "done" : "failed",
-              s.exit_code === 0 ? "Update finished." : `The update failed and ${before} is running again.`,
-            );
+            if (s.exit_code === 0) return succeeded(done);
+            failed(`The update failed and ${before} is running again.`);
             return;
           }
         }
       } catch {
         wentAway = true;
       }
-      if (Date.now() - started() > GIVE_UP_MS)
-        finish("failed", "No answer for two minutes. Check the updater log below.");
+      if (Date.now() - started() > GIVE_UP_MS) failed("No answer for two minutes. Check the updater log below.");
     }, POLL_MS);
   }
 
@@ -161,15 +185,56 @@ export function SelfUpdate() {
                   >
                     <Note
                       action={
-                        <Show when={canUse(release(), v())}>
-                          <Button size="sm" variant="primary" onClick={() => updateToRelease(release(), v())}>
-                            Update to {release().version}
-                          </Button>
-                        </Show>
+                        <div class="hrow">
+                          <Show when={release().changes}>
+                            <Button size="sm" onClick={() => setShowChanges(true)}>
+                              What's new
+                            </Button>
+                          </Show>
+                          <Show when={canUse(release(), v())}>
+                            <Button size="sm" variant="primary" onClick={() => updateToRelease(release(), v())}>
+                              Update to {release().version}
+                            </Button>
+                          </Show>
+                        </div>
                       }
                     >
-                      kuroe {release().version} is out. <ExtLink href={release().url}>Release notes</ExtLink>
+                      kuroe {release().version} is out.
+                      <Show when={!release().changes}>
+                        {" "}
+                        <ExtLink href={release().url}>Release notes</ExtLink>
+                      </Show>
                     </Note>
+                    <Show when={release().changes_error}>
+                      {(error) => <div class="hint">Couldn't read the changelog: {error()}</div>}
+                    </Show>
+                    <Modal
+                      show={showChanges()}
+                      onHide={() => setShowChanges(false)}
+                      width={640}
+                      title="What's new"
+                      subtitle={`From ${v().version} to ${release().version}`}
+                      footer={
+                        <>
+                          <Button variant="ghost" onClick={() => setShowChanges(false)}>
+                            Close
+                          </Button>
+                          <Show when={canUse(release(), v())}>
+                            <Button
+                              variant="primary"
+                              onClick={() => {
+                                setShowChanges(false);
+                                updateToRelease(release(), v());
+                              }}
+                            >
+                              Update to {release().version}
+                            </Button>
+                          </Show>
+                        </>
+                      }
+                    >
+                      <Markdown text={release().changes} />
+                    </Modal>
                   </Show>
                 )}
               </Show>

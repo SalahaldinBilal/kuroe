@@ -3,6 +3,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 const LATEST: &str = "https://api.github.com/repos/SalahaldinBilal/kuroe/releases/latest";
+const RAW: &str = "https://raw.githubusercontent.com/SalahaldinBilal/kuroe";
 pub const IMAGE: &str = "ghcr.io/salahaldinbilal/kuroe";
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -13,6 +14,44 @@ pub struct Latest {
     pub url: String,
     pub image: String,
     pub binary_url: Option<String>,
+    pub changes: String,
+    pub changes_error: Option<String>,
+}
+
+/// `[0.2.3] - 2026-11-07` into the version and what follows it. None for `[Unreleased]`.
+fn heading(head: &str) -> Option<(&str, &str)> {
+    let (version, rest) = head.trim().strip_prefix('[')?.split_once(']')?;
+    parse(version).map(|_| (version, rest))
+}
+
+/// The changelog's sections newer than `current`, up to and including `latest`, as markdown.
+pub fn changes_between(changelog: &str, current: &str, latest: &str) -> String {
+    let mut out = Vec::new();
+    let mut keep = false;
+    for line in changelog.lines() {
+        if let Some(head) = line.strip_prefix("## ") {
+            let section = heading(head).filter(|(v, _)| is_newer(v, current) && !is_newer(v, latest));
+            keep = section.is_some();
+            if let Some((version, rest)) = section {
+                out.push(format!("## {version}{rest}"));
+            }
+            continue;
+        }
+        if keep {
+            out.push(line.to_owned());
+        }
+    }
+    out.join("\n").trim().to_owned()
+}
+
+async fn changelog_at(http: &reqwest::Client, tag: &str) -> anyhow::Result<String> {
+    let response = http
+        .get(format!("{RAW}/{tag}/CHANGELOG.md"))
+        .header("user-agent", "kuroe")
+        .send()
+        .await
+        .context("asking GitHub for the changelog")?;
+    Ok(response.error_for_status().with_context(|| format!("GitHub has no CHANGELOG.md at {tag}"))?.text().await?)
 }
 
 pub fn arch() -> Option<&'static str> {
@@ -46,6 +85,8 @@ pub fn from_release(release: &Value, current: &str, arch: Option<&str>) -> anyho
         image: format!("{IMAGE}:{version}"),
         binary_url,
         version,
+        changes: String::new(),
+        changes_error: None,
     })
 }
 
@@ -61,7 +102,15 @@ pub async fn latest(http: &reqwest::Client, current: &str) -> anyhow::Result<Lat
         bail!("no kuroe release is published yet");
     }
     let release: Value = response.error_for_status().context("GitHub refused the release check")?.json().await?;
-    from_release(&release, current, arch())
+    let mut latest = from_release(&release, current, arch())?;
+    if latest.newer {
+        let tag = release["tag_name"].as_str().unwrap_or_default();
+        match changelog_at(http, tag).await {
+            Ok(changelog) => latest.changes = changes_between(&changelog, current, &latest.version),
+            Err(err) => latest.changes_error = Some(format!("{err:#}")),
+        }
+    }
+    Ok(latest)
 }
 
 #[cfg(test)]
@@ -97,5 +146,53 @@ mod tests {
         assert_eq!(latest.binary_url.as_deref(), Some("https://example.com/kuroe-linux-arm64"));
         assert_eq!(from_release(&release, "0.3.0", None).unwrap().binary_url, None);
         assert!(from_release(&json!({}), "0.2.0", None).is_err());
+    }
+
+    const CHANGELOG: &str = "# Changelog
+
+## [Unreleased]
+
+- Something not released yet.
+
+## [0.2.3] - 2026-11-07
+
+- \"Add it for me\" on the push webhook no longer turns the webhook on when the provider refuses it.
+- kuroe's errors reach the browser behind Cloudflare.
+
+## [0.2.2] - 2026-11-06
+
+- Updating no longer rolls back on servers with HTTP access set to \"local\".
+  The check now uses `/api/v1/health`.
+
+## [0.2.1] - 2026-11-06
+
+- Build output keeps the colors the build tools print.
+
+## [0.2.0] - 2026-11-03
+
+- Deploy history.
+";
+
+    #[test]
+    fn collects_every_version_between_the_running_one_and_the_latest() {
+        assert_eq!(
+            changes_between(CHANGELOG, "0.2.1", "0.2.3"),
+            "## 0.2.3 - 2026-11-07
+
+- \"Add it for me\" on the push webhook no longer turns the webhook on when the provider refuses it.
+- kuroe's errors reach the browser behind Cloudflare.
+
+## 0.2.2 - 2026-11-06
+
+- Updating no longer rolls back on servers with HTTP access set to \"local\".
+  The check now uses `/api/v1/health`."
+        );
+    }
+
+    #[test]
+    fn stops_at_the_latest_release() {
+        let changes = changes_between(CHANGELOG, "0.1.9", "0.2.2");
+        assert!(changes.starts_with("## 0.2.2 - 2026-11-06"), "nothing past the latest release:\n{changes}");
+        assert!(changes.contains("## 0.2.1") && changes.ends_with("- Deploy history."));
     }
 }
