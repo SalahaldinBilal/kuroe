@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-11-08
+
 - Static sites serve `.mjs` files as `application/javascript`. Before, nginx's stock list had no entry for them, so they went out as `application/octet-stream` and browsers refused to load them as modules.
 - Settings has a "Static site file types" card to add or change the content type for any file extension. It applies to every static site, server exports carry it, and saving reloads the static file server right away.
 - A static site can set its own file types in its site settings. They win over the ones in Settings for that site only, and apply as soon as they're saved, without a deploy.
