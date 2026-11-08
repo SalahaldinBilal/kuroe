@@ -1,5 +1,6 @@
 import { Match, Show, Switch } from "solid-js";
 import type { SiteDraft } from "../spec";
+import { PairRows } from "./ui/Editors";
 import Field, { FieldRow } from "./ui/Field/Field";
 import Input from "./ui/Input/Input";
 import SegmentedControl from "./ui/SegmentedControl/SegmentedControl";
@@ -103,6 +104,19 @@ export function SiteFields(props: Props & { fromImage?: boolean }) {
         disabled={props.disabled}
         onChange={(spa) => set({ spa })}
       />
+      <Field
+        label="File types"
+        hint="Content types for this site only. They win over the ones in Settings and apply as soon as you save."
+      >
+        <PairRows
+          rows={props.draft.types}
+          keyLabel="Extension"
+          valueLabel="Content type"
+          addLabel="Add file type"
+          disabled={props.disabled}
+          onChange={(types) => set({ types })}
+        />
+      </Field>
     </div>
   );
 }

@@ -169,6 +169,7 @@ export interface SiteOptions {
   build: SiteBuild;
   output: string;
   spa: boolean;
+  mime_types?: Record<string, string>;
 }
 
 export type SourceKind = Source["kind"];

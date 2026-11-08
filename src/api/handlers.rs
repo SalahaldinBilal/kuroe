@@ -13,6 +13,7 @@ use super::error::{ApiError, ApiResult};
 use super::extract::CurrentUser;
 use super::http_access::{self, HttpAccess};
 use crate::auth::{self, Permission, Role, SESSION_COOKIE, SESSION_TTL_SECS, User};
+use crate::sites;
 
 #[derive(Deserialize)]
 pub struct Credentials {
@@ -275,6 +276,9 @@ pub async fn write_settings(
             ));
         }
     }
+    if let Some(value) = body.get(sites::MIME_TYPES_SETTING) {
+        sites::parse_mime_types(value).map_err(ApiError::bad_request)?;
+    }
     let mut tx = state.db.begin().await?;
     for (key, value) in &body {
         sqlx::query("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
@@ -284,6 +288,11 @@ pub async fn write_settings(
             .await?;
     }
     tx.commit().await?;
+    if body.contains_key(sites::MIME_TYPES_SETTING) {
+        state.runner.sites().refresh_config().await.map_err(|e| {
+            ApiError::new(StatusCode::BAD_GATEWAY, format!("saved, but the static file server didn't take the new file types: {e:#}"))
+        })?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

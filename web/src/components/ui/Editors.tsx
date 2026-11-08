@@ -37,6 +37,7 @@ interface PairRowsProps {
   keyLabel: string;
   valueLabel: string;
   addLabel: string;
+  disabled?: boolean;
   onChange: (rows: { key: string; value: string }[]) => void;
 }
 
@@ -52,6 +53,7 @@ export function PairRows(props: PairRowsProps) {
               class="k"
               label={props.keyLabel}
               placeholder={props.keyLabel}
+              disabled={props.disabled}
               value={row().key}
               onValue={(key) => props.onChange(patch(props.rows, i, { key }))}
             />
@@ -59,14 +61,19 @@ export function PairRows(props: PairRowsProps) {
               mono
               label={props.valueLabel}
               placeholder={props.valueLabel}
+              disabled={props.disabled}
               value={row().value}
               onValue={(value) => props.onChange(patch(props.rows, i, { value }))}
             />
-            <RemoveButton onClick={() => props.onChange(props.rows.filter((_, j) => j !== i))} />
+            <Show when={!props.disabled}>
+              <RemoveButton onClick={() => props.onChange(props.rows.filter((_, j) => j !== i))} />
+            </Show>
           </div>
         )}
       </Index>
-      <AddButton label={props.addLabel} onClick={() => props.onChange([...props.rows, { key: "", value: "" }])} />
+      <Show when={!props.disabled}>
+        <AddButton label={props.addLabel} onClick={() => props.onChange([...props.rows, { key: "", value: "" }])} />
+      </Show>
     </div>
   );
 }

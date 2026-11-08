@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, createSignal, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, Index, Show } from "solid-js";
 import { useUser } from "../App";
 import { api, can, isOwner } from "../api";
 import { ApiTokens } from "../components/ApiTokens";
@@ -8,6 +8,7 @@ import { windowOf } from "../components/RangePicker";
 import { SelfUpdate } from "../components/SelfUpdate";
 import { Card, Note, PageHeader } from "../components/ui/Blocks";
 import Button from "../components/ui/Button/Button";
+import { PairRows } from "../components/ui/Editors";
 import EmptyState from "../components/ui/EmptyState/EmptyState";
 import { Slider } from "../components/ui/Form";
 import { Icon } from "../components/ui/Icon";
@@ -16,9 +17,21 @@ import { ready, SaveBar, same } from "../components/ui/Overlay";
 import Select from "../components/ui/Select/Select";
 import SettingRow from "../components/ui/SettingRow/SettingRow";
 import { Bone, Busy, SkeletonCardHead, SkeletonSettings } from "../components/ui/Skeleton";
+import { type MimeRow, mimeRows, mimeTypesOf } from "../spec";
 import useToastState from "../states/toastState";
 
 type Values = Record<string, string>;
+
+const MIME_TYPES_KEY = "static_mime_types";
+
+function typesToRows(value: string | undefined): MimeRow[] {
+  return value ? mimeRows(JSON.parse(value)) : [];
+}
+
+function rowsToTypes(rows: MimeRow[]): string {
+  const types = mimeTypesOf(rows);
+  return Object.keys(types).length ? JSON.stringify(types) : "";
+}
 
 const KEYS = [
   "public_url",
@@ -67,14 +80,24 @@ export function Settings() {
     const v = ready(values);
     return v ? (Object.fromEntries(KEYS.map((k) => [k, v[k] ?? ""])) as Values) : null;
   });
+  const baseTypes = createMemo(() => {
+    const v = ready(values);
+    return v ? typesToRows(v[MIME_TYPES_KEY]) : null;
+  });
   const [draft, setDraft] = createSignal<Values | null>(null);
+  const [types, setTypes] = createSignal<MimeRow[]>([]);
   const [busy, setBusy] = createSignal(false);
   const canWrite = () => can(user(), "settings");
-  const dirty = () => draft() !== null && !same(draft(), baseline());
+  const dirty = () => draft() !== null && (!same(draft(), baseline()) || !same(types(), baseTypes()));
+
+  function discard() {
+    setDraft(baseline());
+    setTypes(baseTypes() ?? []);
+  }
 
   createEffect(() => {
     const b = baseline();
-    if (b && !draft()) setDraft(b);
+    if (b && !draft()) discard();
   });
 
   const hostCpus = () => ready(info)?.cpus ?? 8;
@@ -119,11 +142,12 @@ export function Settings() {
         }
         next[key] = value;
       }
+      next[MIME_TYPES_KEY] = rowsToTypes(types());
       setBusy(true);
       await api.saveSettings(next);
       pushToast("Settings saved");
       await refetch();
-      setDraft(baseline());
+      discard();
     } catch (err) {
       pushError(err);
     } finally {
@@ -344,6 +368,44 @@ export function Settings() {
               />
             </SettingRow>
           </Card>
+          <Card
+            title="Static site file types"
+            description="Content types for file extensions, on top of the usual list. .mjs is served as application/javascript unless you set it here. A site can change these in its own settings."
+          >
+            <div class="card-b">
+              <Show
+                when={canWrite()}
+                fallback={
+                  <Show
+                    when={types().length}
+                    fallback={
+                      <div class="hint" style={{ "text-align": "center" }}>
+                        None added.
+                      </div>
+                    }
+                  >
+                    <div class="stack" style={{ gap: "6px" }}>
+                      <Index each={types()}>
+                        {(row) => (
+                          <span class="mono">
+                            .{row().key} {row().value}
+                          </span>
+                        )}
+                      </Index>
+                    </div>
+                  </Show>
+                }
+              >
+                <PairRows
+                  rows={types()}
+                  keyLabel="Extension"
+                  valueLabel="Content type"
+                  addLabel="Add file type"
+                  onChange={setTypes}
+                />
+              </Show>
+            </div>
+          </Card>
           <Card title="Retention">
             <SettingRow label="Metrics" description="Samples older than this many days are deleted. Default is 30.">
               <Input
@@ -390,7 +452,7 @@ export function Settings() {
             busy={busy()}
             message="Unsaved changes."
             onSave={save}
-            onDiscard={() => setDraft(baseline())}
+            onDiscard={discard}
           />
           <HttpOffConfirm
             show={confirmingHttp()}

@@ -107,6 +107,7 @@ pub async fn apply(State(state): State<AppState>, current: CurrentUser, Json(bod
         let settings = crate::proxy::load_settings(&state.db).await?;
         state.runner.apply_proxy(&settings).await.map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, format!("{e:#}")))?;
     }
+    state.runner.sites().refresh_config().await.map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, format!("{e:#}")))?;
     let mut out = json!(applied);
     for (i, hook) in applied.webhooks.iter().enumerate() {
         if let Some(d) = crate::deploy::get(&state.db, &hook.deployment_id).await? {

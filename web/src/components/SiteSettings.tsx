@@ -46,8 +46,10 @@ export function SiteSettings(props: { detail: DeploymentDetail; onSaved: (spec: 
         secret_refs: withEnvRefs(props.detail.spec, refs),
         site: siteOf(draft().site),
       };
+      const withoutTypes = (d: Draft) => ({ ...d, site: { ...d.site, types: [] } });
+      const onlyTypes = same(withoutTypes(draft()), withoutTypes(baseline()));
       await api.updateDeployment(props.detail.id, spec);
-      pushToast("Site settings saved. They apply on the next deploy.");
+      pushToast(onlyTypes ? "File types saved and applied." : "Site settings saved. They apply on the next deploy.");
       props.onSaved(spec);
       setDraft(draftOf({ ...props.detail, spec }));
     } catch (err) {

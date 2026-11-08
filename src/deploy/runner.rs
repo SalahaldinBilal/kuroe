@@ -552,8 +552,8 @@ impl Runner {
         self.deployment_dir(id).join("site.archive")
     }
 
-    fn sites(&self) -> Sites {
-        Sites { docker: self.docker.clone() }
+    pub fn sites(&self) -> Sites {
+        Sites { docker: self.docker.clone(), db: self.db.clone() }
     }
 
     /// `in_flight` comes from `live.start`, taken before `begin_deploy`. `previous` is the status before this deploy,

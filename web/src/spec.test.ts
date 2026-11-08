@@ -72,6 +72,30 @@ describe("sources", () => {
       spa: true,
     });
   });
+
+  it("cleans up file types the way people type them", () => {
+    const rows = [
+      { key: ".MJS", value: " text/javascript " },
+      { key: "", value: "" },
+      { key: "md", value: "text/markdown" },
+    ];
+    const site = siteOf({ ...NODE_SITE, types: rows });
+    expect(site.mime_types).toEqual({ mjs: "text/javascript", md: "text/markdown" });
+    expect(siteDraft(site).types).toEqual([
+      { key: "mjs", value: "text/javascript" },
+      { key: "md", value: "text/markdown" },
+    ]);
+    expect(() => siteOf({ ...NODE_SITE, types: [{ key: "md", value: "" }] })).toThrow();
+    expect(() =>
+      siteOf({
+        ...NODE_SITE,
+        types: [
+          { key: "md", value: "text/plain" },
+          { key: ".md", value: "text/markdown" },
+        ],
+      }),
+    ).toThrow();
+  });
 });
 
 describe("ports", () => {

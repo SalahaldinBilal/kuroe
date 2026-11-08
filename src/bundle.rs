@@ -41,6 +41,7 @@ const SERVER_SETTINGS: &[&str] = &[
     "retention_deploys",
     "retention_logs_days",
     "retention_metrics_days",
+    crate::sites::MIME_TYPES_SETTING,
     "web_server",
 ];
 
@@ -431,6 +432,9 @@ pub fn from_toml(text: &str) -> anyhow::Result<Bundle> {
                 bail!("{} has a domain {:?} that is not a valid hostname", d.name, domain.hostname);
             }
             domain.options.check().map_err(|e| anyhow::anyhow!("{}: {e}", domain.hostname))?;
+        }
+        if let Some(site) = &d.site {
+            crate::sites::check_mime_types(&site.mime_types).map_err(|e| anyhow::anyhow!("{}: {e}", d.name))?;
         }
     }
     Ok(bundle)
@@ -883,6 +887,9 @@ pub async fn plan(db: &SqlitePool, bundle: &Bundle) -> anyhow::Result<Plan> {
             if !SERVER_SETTINGS.contains(&key.as_str()) {
                 bail!("setting {key} can't be imported");
             }
+            if key == crate::sites::MIME_TYPES_SETTING {
+                crate::sites::parse_mime_types(to).map_err(|e| anyhow::anyhow!("setting {key}: {e}"))?;
+            }
             let mut from: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key = ?").bind(key).fetch_optional(db).await?;
             if key == "dns_identity" {
                 from = identity_ref(db, from.as_deref(), true).await?;
@@ -1226,6 +1233,7 @@ mod tests {
             build: crate::deploy::spec::SiteBuild::Command { image: "node:26-alpine".into(), command: "npm ci && npm run build".into() },
             output: "dist".into(),
             spa: true,
+            ..Default::default()
         });
         deploy::create(db, "docs", &docs, &owner).await.unwrap();
         sqlx::query("INSERT INTO roles (name, description, permissions, scope) VALUES ('frontend', 'Ships the site', ?, ?)")

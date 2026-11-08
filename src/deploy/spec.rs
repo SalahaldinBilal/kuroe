@@ -128,6 +128,9 @@ pub struct SiteOptions {
     /// Answer paths without a file with `index.html`, for single-page apps.
     #[serde(default)]
     pub spa: bool,
+    /// Extension to content type, over the server's own list for this site only.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub mime_types: crate::sites::MimeTypes,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -148,6 +151,7 @@ pub enum SiteBuild {
 impl SiteOptions {
     /// Checks the output folder against the build kind.
     pub fn check(&self) -> Result<(), String> {
+        crate::sites::check_mime_types(&self.mime_types)?;
         let output = self.output.trim();
         if output.split(['/', '\\']).any(|part| part == "..") {
             return Err(format!("the output folder {output} can't contain .."));
@@ -434,7 +438,7 @@ mod tests {
 
     #[test]
     fn static_sites_need_site_options_and_a_fitting_output() {
-        let site = |build: SiteBuild, output: &str| SiteOptions { build, output: output.into(), spa: false };
+        let site = |build: SiteBuild, output: &str| SiteOptions { build, output: output.into(), ..Default::default() };
         let node = SiteBuild::Command { image: "node:26-alpine".into(), command: "npm ci && npm run build".into() };
         assert!(site(node.clone(), "dist").check().is_ok());
         assert!(site(node.clone(), "/dist").check().is_err(), "a command's output is inside the source");

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Static sites serve `.mjs` files as `application/javascript`. Before, nginx's stock list had no entry for them, so they went out as `application/octet-stream` and browsers refused to load them as modules.
+- Settings has a "Static site file types" card to add or change the content type for any file extension. It applies to every static site, server exports carry it, and saving reloads the static file server right away.
+- A static site can set its own file types in its site settings. They win over the ones in Settings for that site only, and apply as soon as they're saved, without a deploy.
+
 ## [0.2.4] - 2026-11-07
 
 - The page reloads by itself once an update is done, so the browser runs the new version's UI right away. A container update counts as done once the updater has checked the new container and removed the old one. The "Now running" note shows again after the reload.

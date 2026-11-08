@@ -113,11 +113,12 @@ async fn traefik_routes_paths_redirects_and_error_pages() {
         docker.start_container(name, None).await.unwrap();
     }
     create(&docker, STATIC, kuroe::sites::IMAGE, None).await;
+    let static_conf = kuroe::sites::nginx_conf(&Default::default(), &Default::default()).unwrap();
     upload(
         &docker,
         STATIC,
         &[
-            ("etc/nginx/nginx.conf", kuroe::sites::NGINX_CONF.as_bytes()),
+            ("etc/nginx/nginx.conf", static_conf.as_bytes()),
             ("sites/_errors/d1/dm1/default.html", b"back soon"),
             ("sites/_errors/d1/dm1/1.json", br#"{"error":"down"}"#),
         ],

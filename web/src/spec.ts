@@ -128,6 +128,26 @@ export function isStatic(spec: Spec): boolean {
   return s.kind === "static" || s.kind === "image" || (s.kind === "git" && s.compose_file == null);
 }
 
+export type MimeRow = { key: string; value: string };
+
+export function mimeRows(types: Record<string, string> | undefined): MimeRow[] {
+  return Object.entries(types ?? {}).map(([key, value]) => ({ key, value }));
+}
+
+/** Extension to content type. Extensions lose a leading dot and go lowercase, rows with both fields empty are skipped. */
+export function mimeTypesOf(rows: MimeRow[]): Record<string, string> {
+  const types: Record<string, string> = {};
+  for (const row of rows) {
+    const ext = row.key.trim().replace(/^\.+/, "").toLowerCase();
+    const type = row.value.trim();
+    if (!ext && !type) continue;
+    if (!ext || !type) throw new Error("Each file type needs an extension and a content type");
+    if (ext in types) throw new Error(`.${ext} is listed twice`);
+    types[ext] = type;
+  }
+  return types;
+}
+
 export interface SiteDraft {
   build: "none" | "command" | "dockerfile";
   image: string;
@@ -135,6 +155,7 @@ export interface SiteDraft {
   dockerfile: string;
   output: string;
   spa: boolean;
+  types: MimeRow[];
 }
 
 export const NODE_SITE: SiteDraft = {
@@ -144,6 +165,7 @@ export const NODE_SITE: SiteDraft = {
   dockerfile: "",
   output: "dist",
   spa: true,
+  types: [],
 };
 
 export function siteDraft(site: SiteOptions | null | undefined): SiteDraft {
@@ -156,22 +178,30 @@ export function siteDraft(site: SiteOptions | null | undefined): SiteDraft {
     dockerfile: b.kind === "dockerfile" ? (b.dockerfile ?? "") : "",
     output: site.output,
     spa: site.spa,
+    types: mimeRows(site.mime_types),
   };
+}
+
+function buildOf(d: SiteDraft, output: string): SiteOptions["build"] {
+  switch (d.build) {
+    case "command":
+      if (!d.image.trim() || !d.command.trim()) throw new Error("the build step needs an image and a command");
+      return { kind: "command", image: d.image.trim(), command: d.command.trim() };
+    case "dockerfile":
+      if (!output.startsWith("/"))
+        throw new Error("with a Dockerfile, the output folder is a path in the image, like /app/dist");
+      return { kind: "dockerfile", dockerfile: d.dockerfile.trim() || null };
+    default:
+      return { kind: "none" };
+  }
 }
 
 export function siteOf(d: SiteDraft): SiteOptions {
   const output = d.output.trim();
-  switch (d.build) {
-    case "command":
-      if (!d.image.trim() || !d.command.trim()) throw new Error("the build step needs an image and a command");
-      return { build: { kind: "command", image: d.image.trim(), command: d.command.trim() }, output, spa: d.spa };
-    case "dockerfile":
-      if (!output.startsWith("/"))
-        throw new Error("with a Dockerfile, the output folder is a path in the image, like /app/dist");
-      return { build: { kind: "dockerfile", dockerfile: d.dockerfile.trim() || null }, output, spa: d.spa };
-    default:
-      return { build: { kind: "none" }, output, spa: d.spa };
-  }
+  const site: SiteOptions = { build: buildOf(d, output), output, spa: d.spa };
+  const types = mimeTypesOf(d.types);
+  if (Object.keys(types).length) site.mime_types = types;
+  return site;
 }
 
 export function sourceLabel(spec: Spec): string {

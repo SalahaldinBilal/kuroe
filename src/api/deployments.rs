@@ -84,6 +84,7 @@ pub fn check_spec(spec: &Spec, swarm_manager: bool) -> Result<(), String> {
         }
         (Source::Git { .. } | Source::Static {}, Some(site)) => site.check()?,
         (Source::Image { .. }, Some(site)) => {
+            crate::sites::check_mime_types(&site.mime_types)?;
             if !matches!(site.build, crate::deploy::spec::SiteBuild::None) {
                 return Err("an image is already built, so its files are served as they are".into());
             }
@@ -312,7 +313,20 @@ pub async fn update(
     super::saved_secrets::check_spec(&state, &current, &spec, Some(&existing.spec)).await?;
     spec.clear_referenced_values();
     deploy::update_spec(&state.db, &id, &spec).await?;
+    if site_types(&spec) != site_types(&existing.spec) {
+        refresh_site_types(&state).await?;
+    }
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn site_types(spec: &Spec) -> Option<&crate::sites::MimeTypes> {
+    spec.site.as_ref().map(|s| &s.mime_types).filter(|t| !t.is_empty())
+}
+
+async fn refresh_site_types(state: &AppState) -> ApiResult<()> {
+    state.runner.sites().refresh_config().await.map_err(|e| {
+        ApiError::new(StatusCode::BAD_GATEWAY, format!("the static file server didn't take the new file types: {e:#}"))
+    })
 }
 
 /// The deploy stops where it is and cleans up after itself, then reports through the usual status event.
@@ -343,6 +357,9 @@ pub async fn remove(State(state): State<AppState>, current: CurrentUser, Path(id
     }
     state.runner.remove(&d).await?;
     deploy::delete(&state.db, &id).await?;
+    if site_types(&d.spec).is_some() {
+        refresh_site_types(&state).await?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
