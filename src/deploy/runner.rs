@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, bail};
 use bollard::Docker;
 use bollard::models::{NetworkConnectRequest, NetworkCreateRequest, VolumeCreateRequest};
-use bollard::query_parameters::{BuildImageOptionsBuilder, DataUsageOptions, ListContainersOptionsBuilder};
+use bollard::query_parameters::{BuildImageOptionsBuilder, DataUsageOptions, ListContainersOptionsBuilder, LogsOptionsBuilder};
 use bytes::Bytes;
 use futures::StreamExt;
 use serde::Serialize;
@@ -806,6 +806,8 @@ impl Runner {
             if let Source::Image { image, .. } = &d.spec.source {
                 self.record_digest(image, log).await;
             }
+        } else {
+            self.log_stopped_output(&project, log).await;
         }
 
         match strategy {
@@ -1405,6 +1407,42 @@ impl Runner {
             .collect();
         containers.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(containers)
+    }
+
+    async fn log_stopped_output(&self, project: &str, log: &mut Log) {
+        let filters = HashMap::from([
+            ("label", vec![format!("{LABEL_PROJECT}={project}")]),
+            ("status", vec!["exited".into(), "dead".into(), "restarting".into()]),
+        ]);
+        let options = ListContainersOptionsBuilder::new().all(true).filters(&filters).build();
+        let containers = match self.docker.list_containers(Some(options)).await {
+            Ok(containers) => containers,
+            Err(err) => return log.line(format!("warning: listing stopped containers: {err:#}")),
+        };
+        for container in containers {
+            let Some(id) = container.id else { continue };
+            let name = container.names.and_then(|n| n.first().cloned()).unwrap_or_default().trim_start_matches('/').to_owned();
+            let options = LogsOptionsBuilder::new().stdout(true).stderr(true).tail("1000").build();
+            let mut stream = self.docker.logs(&id, Some(options));
+            let mut text = String::new();
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    Ok(chunk) => text.push_str(&chunk.to_string()),
+                    Err(err) => {
+                        log.line(format!("warning: reading the output of {name}: {err:#}"));
+                        break;
+                    }
+                }
+            }
+            if text.trim().is_empty() {
+                log.line(format!("{name} printed nothing before it stopped"));
+                continue;
+            }
+            log.line(format!("last output of {name}:"));
+            for line in text.lines() {
+                log.line(format!("  {line}"));
+            }
+        }
     }
 
     async fn compose(&self, dir: &Path, project: &str, file: Option<&str>, args: &[&str], log: &mut Log) -> anyhow::Result<String> {

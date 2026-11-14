@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- When a container exits or keeps restarting during a deploy, the "Starting" step shows its last 1000 lines of output. Before, it only said `exited (1)`, and kuroe removed the container before you could read why.
+
 ## [0.2.5] - 2026-11-08
 
 - Static sites serve `.mjs` files as `application/javascript`. Before, nginx's stock list had no entry for them, so they went out as `application/octet-stream` and browsers refused to load them as modules.
