@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-11-14
+
 - When a container exits or keeps restarting during a deploy, the "Starting" step shows its last 1000 lines of output. Before, it only said `exited (1)`, and kuroe removed the container before you could read why.
 
 ## [0.2.5] - 2026-11-08
